@@ -20,8 +20,15 @@ impl Ecs {
     }
 
     pub fn from_rusqlite(conn: rusqlite::Connection) -> Result<Self, Error> {
+        conn.pragma_update(None, "journal_mode", "wal")?;
         conn.execute_batch(include_str!("schema.sql"))?;
         Ok(Self { conn })
+    }
+}
+
+impl Ecs {
+    pub fn close(self) -> Result<(), Error> {
+        self.conn.close().map_err(|(_conn, e)| Error::Database(e))
     }
 }
 
@@ -208,8 +215,17 @@ pub mod query {
         B: Filter,
     {
         fn sql_query() -> sea_query::SelectStatement {
-            A::sql_query()
-                .union(sea_query::UnionType::Intersect, B::sql_query())
+            use sea_query::*;
+            Query::select()
+                .column(Asterisk)
+                .from_subquery(A::sql_query(), NullAlias)
+                .union(
+                    UnionType::Intersect,
+                    Query::select()
+                        .column(Asterisk)
+                        .from_subquery(B::sql_query(), NullAlias)
+                        .take(),
+                )
                 .take()
         }
     }
@@ -221,8 +237,17 @@ pub mod query {
         B: Filter,
     {
         fn sql_query() -> sea_query::SelectStatement {
-            A::sql_query()
-                .union(sea_query::UnionType::Distinct, B::sql_query())
+            use sea_query::*;
+            Query::select()
+                .column(Asterisk)
+                .from_subquery(A::sql_query(), NullAlias)
+                .union(
+                    UnionType::Distinct,
+                    Query::select()
+                        .column(Asterisk)
+                        .from_subquery(B::sql_query(), NullAlias)
+                        .take(),
+                )
                 .take()
         }
     }
@@ -464,8 +489,17 @@ mod tests {
             1
         );
         assert_eq!(
-            db.query::<(With<MarkerComponent>, Without<ComponentWithData>)>()
+            db.query::<(With<MarkerComponent>, Without<MarkerComponent>)>()
                 .count(),
+            0
+        );
+        assert_eq!(
+            db.query::<(
+                With<MarkerComponent>,
+                Without<MarkerComponent>,
+                Or<MarkerComponent, ComponentWithData>
+            )>()
+            .count(),
             0
         );
         assert_eq!(db.query::<ComponentWithData>().count(), 2);

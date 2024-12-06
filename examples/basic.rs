@@ -13,7 +13,7 @@ struct Date(chrono::NaiveDate);
 pub fn main() -> Result<(), anyhow::Error> {
     tracing_subscriber::fmt::init();
 
-    let db = ecsdb::Ecs::open("ecs.sqlite")?;
+    let db = ecsdb::Ecs::open("basic.sqlite")?;
 
     let _entry = db
         .new_entity()
@@ -25,6 +25,13 @@ pub fn main() -> Result<(), anyhow::Error> {
 
     println!("Total: {} entities", db.query::<()>().count());
 
+    let _ = db.query::<(
+        DiaryEntry,
+        Contents,
+        Without<Date>,
+        Or<DiaryEntry, Contents>,
+    )>();
+
     for entry in db.query::<With<And<DiaryEntry, Contents>>>() {
         println!("DiaryEntry",);
         println!("  id:\t{}", entry.id(),);
@@ -35,6 +42,8 @@ pub fn main() -> Result<(), anyhow::Error> {
         println!("  text:\t{}", entry.component::<Contents>().unwrap().0);
         println!()
     }
+
+    db.close().unwrap();
 
     Ok(())
 }
