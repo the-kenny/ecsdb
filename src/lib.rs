@@ -73,6 +73,8 @@ impl Ecs {
 
         use sea_query::*;
         let sql = q.filter_query().to_string(SqliteQueryBuilder);
+        debug!(%sql);
+
         let rows = {
             let mut stmt = self.conn.prepare(&sql)?;
             let rows = stmt
@@ -214,6 +216,53 @@ pub mod query {
                 .take()
         }
     }
+
+    macro_rules! filter_tuple_impl {
+        ($t:tt) => {
+            impl<$t> Filter for ($t,)
+            where
+                $t: Filter,
+            {
+                fn sql_query() -> sea_query::SelectStatement {
+                    $t::sql_query().take()
+                    // let queries = [
+                    //     $(
+                    //         $t::sql_query().take(),
+                    //     )+
+                    // ];
+                    // queries.into_iter().reduce(|mut a,b| a.union(sea_query::UnionType::Intersect, b).take()).unwrap()
+                }
+            }
+        };
+        ($t:tt, $($ts:tt),+) => {
+            impl<$t, $($ts,)+> Filter for ($t, $($ts,)+)
+            where
+                $t: Filter,
+                $($ts: Filter,)+
+            {
+                fn sql_query() -> sea_query::SelectStatement {
+                    $t::sql_query().union(sea_query::UnionType::Intersect, <($($ts,)+) as Filter>::sql_query()).take()
+                }
+            }
+
+            filter_tuple_impl!($($ts),+);
+        };
+
+    }
+
+    filter_tuple_impl!(A, B, C, D, E, F, G, H, I, J, K, L, M, O, P, Q, R, S, T, U, V, W, X, Y, Z);
+
+    // impl<F1, F2> Filter for (F1, F2)
+    // where
+    //     F1: Filter,
+    //     F2: Filter,
+    // {
+    //     fn sql_query() -> sea_query::SelectStatement {
+    //         F1::sql_query()
+    //             .union(sea_query::UnionType::Intersect, F2::sql_query())
+    //             .take()
+    //     }
+    // }
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -224,7 +273,7 @@ pub struct WithEntityId(EntityId);
 pub struct Entity<'a, S>(&'a rusqlite::Connection, S);
 
 impl<'a> Entity<'a, WithEntityId> {
-    pub fn entity_id(&self) -> EntityId {
+    pub fn id(&self) -> EntityId {
         (self.1).0
     }
 
@@ -238,9 +287,7 @@ impl<'a> Entity<'a, WithEntityId> {
             .0
             .prepare("select data from components where entity = ?1 and component = ?2")?;
         let row = query
-            .query_and_then(params![self.entity_id(), name], |row| {
-                row.get::<_, String>("data")
-            })?
+            .query_and_then(params![self.id(), name], |row| row.get::<_, String>("data"))?
             .next();
 
         match row {
@@ -274,7 +321,7 @@ impl<'a> Entity<'a, WithEntityId> {
 
         self.0.query_row_and_then(
             "insert into components (entity, component, data) values (?1, ?2, ?3) returning entity",
-            params![self.entity_id(), T::component_name(), json],
+            params![self.id(), T::component_name(), json],
             |row| row.get::<_, EntityId>("entity"),
         )?;
 
@@ -284,7 +331,7 @@ impl<'a> Entity<'a, WithEntityId> {
     pub fn try_detach<T: ComponentName>(self) -> Result<Self, Error> {
         self.0.execute(
             "delete from components where entity = ?1 and component = ?2",
-            params![self.entity_id(), T::component_name()],
+            params![self.id(), T::component_name()],
         )?;
 
         Ok(self)
@@ -388,9 +435,26 @@ mod tests {
     use super::query::*;
 
     #[test]
-    fn query() {
-        tracing_subscriber::fmt::init();
+    fn queries() {
+        let db = super::Ecs::open_in_memory().unwrap();
+        let _ = db.query::<MarkerComponent>();
+        let _ = db.query::<With<MarkerComponent>>();
+        let _ = db.query::<And<MarkerComponent, Without<ComponentWithData>>>();
+        let _ = db.query::<(MarkerComponent, Without<ComponentWithData>)>();
+        let _ = db.query::<(
+            MarkerComponent,
+            MarkerComponent,
+            MarkerComponent,
+            MarkerComponent,
+            MarkerComponent,
+            MarkerComponent,
+            MarkerComponent,
+            MarkerComponent,
+        )>();
+    }
 
+    #[test]
+    fn query() {
         let db = super::Ecs::open_in_memory().unwrap();
 
         db.new_entity()
@@ -410,6 +474,7 @@ mod tests {
         for entity in db.query::<Query<Without<MarkerComponent>>>() {
             dbg!(entity);
         }
+
         for entity in db.query::<Query<And<With<MarkerComponent>, With<ComponentWithData>>>>() {
             dbg!(entity);
         }

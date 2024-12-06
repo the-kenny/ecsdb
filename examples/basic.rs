@@ -11,6 +11,8 @@ struct Contents(String);
 struct Date(chrono::NaiveDate);
 
 pub fn main() -> Result<(), anyhow::Error> {
+    tracing_subscriber::fmt::init();
+
     let db = ecsdb::Ecs::open("ecs.sqlite")?;
 
     let entry = db
@@ -22,7 +24,7 @@ pub fn main() -> Result<(), anyhow::Error> {
     use ecsdb::query::*;
     for entry in db.query::<With<And<DiaryEntry, Contents>>>() {
         println!("DiaryEntry",);
-        println!("  id:\t{}", entry.entity_id(),);
+        println!("  id:\t{}", entry.id(),);
         println!(
             "  date:\t{}",
             entry.component::<Date>().unwrap().0.to_string(),
