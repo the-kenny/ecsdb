@@ -336,10 +336,9 @@ impl<'a> Entity<'a, WithEntityId> {
         let json =
             serde_json::to_string(&component).map_err(|e| Error::ComponentSave(e.to_string()))?;
 
-        self.0.query_row_and_then(
-            "insert into components (entity, component, data) values (?1, ?2, ?3) returning entity",
+        self.0.execute(
+            "insert or replace into components (entity, component, data) values (?1, ?2, ?3)",
             params![self.id(), T::component_name(), json],
-            |row| row.get::<_, EntityId>("entity"),
         )?;
 
         Ok(self)
@@ -447,6 +446,17 @@ mod tests {
             entity.component::<ComponentWithData>(),
             Some(ComponentWithData(1234))
         );
+    }
+
+    #[test]
+    fn component_overwrites() {
+        let db = super::Ecs::open_in_memory().unwrap();
+
+        let entity = db
+            .new_entity()
+            .attach(ComponentWithData(42))
+            .attach(ComponentWithData(23));
+        assert_eq!(entity.component::<ComponentWithData>().unwrap().0, 23);
     }
 
     use super::query::*;
