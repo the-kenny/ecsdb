@@ -132,7 +132,7 @@ pub mod query {
         // }
 
         pub fn filter_query(&self) -> sea_query::SelectStatement {
-            F::sql_query()
+            F::sql_query().distinct().take()
         }
     }
 
@@ -158,6 +158,16 @@ pub mod query {
 
         fn new() -> Query<Self::F> {
             Query(Default::default())
+        }
+    }
+
+    impl Filter for () {
+        fn sql_query() -> sea_query::SelectStatement {
+            use sea_query::*;
+            Query::select()
+                .column(Components::Entity)
+                .from(Components::Table)
+                .take()
         }
     }
 
@@ -212,7 +222,7 @@ pub mod query {
     {
         fn sql_query() -> sea_query::SelectStatement {
             A::sql_query()
-                .union(sea_query::UnionType::All, B::sql_query())
+                .union(sea_query::UnionType::Distinct, B::sql_query())
                 .take()
         }
     }
@@ -225,12 +235,6 @@ pub mod query {
             {
                 fn sql_query() -> sea_query::SelectStatement {
                     $t::sql_query().take()
-                    // let queries = [
-                    //     $(
-                    //         $t::sql_query().take(),
-                    //     )+
-                    // ];
-                    // queries.into_iter().reduce(|mut a,b| a.union(sea_query::UnionType::Intersect, b).take()).unwrap()
                 }
             }
         };
@@ -241,7 +245,7 @@ pub mod query {
                 $($ts: Filter,)+
             {
                 fn sql_query() -> sea_query::SelectStatement {
-                    $t::sql_query().union(sea_query::UnionType::Intersect, <($($ts,)+) as Filter>::sql_query()).take()
+                    And::<$t, ($($ts,)+)>::sql_query()
                 }
             }
 
@@ -251,18 +255,6 @@ pub mod query {
     }
 
     filter_tuple_impl!(A, B, C, D, E, F, G, H, I, J, K, L, M, O, P, Q, R, S, T, U, V, W, X, Y, Z);
-
-    // impl<F1, F2> Filter for (F1, F2)
-    // where
-    //     F1: Filter,
-    //     F2: Filter,
-    // {
-    //     fn sql_query() -> sea_query::SelectStatement {
-    //         F1::sql_query()
-    //             .union(sea_query::UnionType::Intersect, F2::sql_query())
-    //             .take()
-    //     }
-    // }
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -463,20 +455,19 @@ mod tests {
 
         db.new_entity().attach(ComponentWithData(1234));
 
-        for entity in db.query::<With<MarkerComponent>>() {
-            dbg!(entity);
-        }
-
-        for entity in db.query::<MarkerComponent>() {
-            dbg!(entity);
-        }
-
-        for entity in db.query::<Query<Without<MarkerComponent>>>() {
-            dbg!(entity);
-        }
-
-        for entity in db.query::<Query<And<With<MarkerComponent>, With<ComponentWithData>>>>() {
-            dbg!(entity);
-        }
+        assert_eq!(db.query::<()>().count(), 2);
+        assert_eq!(db.query::<MarkerComponent>().count(), 1);
+        assert_eq!(db.query::<With<MarkerComponent>>().count(), 1);
+        assert_eq!(db.query::<Without<MarkerComponent>>().count(), 1);
+        assert_eq!(
+            db.query::<(MarkerComponent, ComponentWithData)>().count(),
+            1
+        );
+        assert_eq!(
+            db.query::<(With<MarkerComponent>, Without<ComponentWithData>)>()
+                .count(),
+            0
+        );
+        assert_eq!(db.query::<ComponentWithData>().count(), 2);
     }
 }
