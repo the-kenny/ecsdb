@@ -382,8 +382,8 @@ impl<'a> std::fmt::Debug for Entity<'a, WithEntityId> {
 
 #[cfg(test)]
 mod tests {
-    use crate as ecsdb; // #[derive(Component)] derives `impl ecsdb::ComponentName for ...`
     use crate::ComponentName;
+    use crate::{self as ecsdb, Ecs}; // #[derive(Component)] derives `impl ecsdb::ComponentName for ...`
 
     use ecsdb_derive::Component;
     use serde::{Deserialize, Serialize};
@@ -502,5 +502,18 @@ mod tests {
             0
         );
         assert_eq!(db.query::<ComponentWithData>().count(), 2);
+    }
+
+    #[test]
+    fn enum_component() {
+        #[derive(Serialize, Deserialize, Component, PartialEq, Debug)]
+        enum Foo {
+            A,
+            B,
+        }
+
+        let db = Ecs::open("foo.db").unwrap();
+        let entity = db.new_entity().attach(Foo::A);
+        assert_eq!(entity.component::<Foo>().unwrap(), Foo::A);
     }
 }
