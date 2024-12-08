@@ -77,7 +77,7 @@ impl Ecs {
         debug!("Running Query {}", std::any::type_name::<Q>());
 
         use sea_query::*;
-        let sql = Q::sql_query().to_string(SqliteQueryBuilder);
+        let sql = Q::sql_query().distinct().to_string(SqliteQueryBuilder);
         debug!(%sql);
 
         let rows = {
