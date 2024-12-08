@@ -61,7 +61,7 @@ impl Ecs {
 impl Ecs {
     pub fn query<'a, Q>(&'a self) -> impl Iterator<Item = Entity<'a, WithEntityId>> + 'a
     where
-        Q: query::IntoQuery + 'a,
+        Q: query::Filter + 'a,
     {
         self.try_query::<'a, Q>().unwrap()
     }
@@ -70,16 +70,14 @@ impl Ecs {
         &'a self,
     ) -> Result<impl Iterator<Item = Entity<'a, WithEntityId>> + 'a, Error>
     where
-        Q: query::IntoQuery + 'a,
+        Q: query::Filter + 'a,
     {
         let _span = debug_span!("query").entered();
 
         debug!("Running Query {}", std::any::type_name::<Q>());
 
-        let q = Q::new();
-
         use sea_query::*;
-        let sql = q.filter_query().to_string(SqliteQueryBuilder);
+        let sql = Q::sql_query().to_string(SqliteQueryBuilder);
         debug!(%sql);
 
         let rows = {
@@ -128,46 +126,6 @@ pub mod query {
         fn sql_query() -> sea_query::SelectStatement;
     }
 
-    pub struct Query<F>(PhantomData<F>);
-
-    impl<F> Query<F>
-    where
-        F: Filter,
-    {
-        // pub fn component_names(&self) -> impl Iterator<Item = &'static str> {
-        //     iter::once(C::component_name())
-        // }
-
-        pub fn filter_query(&self) -> sea_query::SelectStatement {
-            F::sql_query().distinct().take()
-        }
-    }
-
-    pub trait IntoQuery {
-        type F: Filter;
-
-        fn new() -> Query<Self::F>;
-    }
-
-    impl<F> IntoQuery for Query<F>
-    where
-        F: Filter,
-    {
-        type F = F;
-
-        fn new() -> Self {
-            Self(Default::default())
-        }
-    }
-
-    impl<F: Filter> IntoQuery for F {
-        type F = F;
-
-        fn new() -> Query<Self::F> {
-            Query(Default::default())
-        }
-    }
-
     impl Filter for () {
         fn sql_query() -> sea_query::SelectStatement {
             use sea_query::*;
@@ -189,80 +147,41 @@ pub mod query {
         }
     }
 
-    pub struct With<F>(PhantomData<F>);
-    impl<F: Filter> Filter for With<F> {
-        fn sql_query() -> sea_query::SelectStatement {
-            F::sql_query()
-        }
-    }
-
-    pub struct Without<F>(PhantomData<F>);
-    impl<F: Filter> Filter for Without<F> {
+    pub struct Without<C>(PhantomData<C>);
+    impl<C: ComponentName> Filter for Without<C> {
         fn sql_query() -> sea_query::SelectStatement {
             use sea_query::*;
             Query::select()
                 .column(Components::Entity)
                 .from(Components::Table)
-                .and_where(Expr::col(Components::Entity).not_in_subquery(F::sql_query()))
+                .and_where(Expr::col(Components::Entity).not_in_subquery(C::sql_query()))
                 .take()
         }
     }
 
-    pub struct And<A, B>(PhantomData<(A, B)>);
-    impl<A, B> Filter for And<A, B>
-    where
-        A: Filter,
-        B: Filter,
-    {
-        fn sql_query() -> sea_query::SelectStatement {
-            use sea_query::*;
-            Query::select()
-                .column(Asterisk)
-                .from_subquery(A::sql_query(), NullAlias)
-                .union(
-                    UnionType::Intersect,
-                    Query::select()
-                        .column(Asterisk)
-                        .from_subquery(B::sql_query(), NullAlias)
-                        .take(),
-                )
-                .take()
-        }
-    }
-
-    pub struct Or<A, B>(PhantomData<(A, B)>);
-    impl<A, B> Filter for Or<A, B>
-    where
-        A: Filter,
-        B: Filter,
-    {
-        fn sql_query() -> sea_query::SelectStatement {
-            use sea_query::*;
-            Query::select()
-                .column(Asterisk)
-                .from_subquery(A::sql_query(), NullAlias)
-                .union(
-                    UnionType::Distinct,
-                    Query::select()
-                        .column(Asterisk)
-                        .from_subquery(B::sql_query(), NullAlias)
-                        .take(),
-                )
-                .take()
-        }
-    }
+    pub struct Or<T>(PhantomData<T>);
 
     macro_rules! filter_tuple_impl {
         ($t:tt) => {
-            impl<$t> Filter for ($t,)
-            where
-                $t: Filter,
-            {
+            impl<$t: Filter> Filter for ($t,) {
                 fn sql_query() -> sea_query::SelectStatement {
                     $t::sql_query().take()
                 }
             }
+
+            impl<$t: Filter> Filter for Or<($t,)> {
+                fn sql_query() -> sea_query::SelectStatement {
+                    $t::sql_query().take()
+                }
+            }
+
+            impl<$t: ComponentName> Filter for Without<($t,)> {
+                fn sql_query() -> sea_query::SelectStatement {
+                    Without::<$t>::sql_query().take()
+                }
+            }
         };
+
         ($t:tt, $($ts:tt),+) => {
             impl<$t, $($ts,)+> Filter for ($t, $($ts,)+)
             where
@@ -270,16 +189,73 @@ pub mod query {
                 $($ts: Filter,)+
             {
                 fn sql_query() -> sea_query::SelectStatement {
-                    And::<$t, ($($ts,)+)>::sql_query()
+                    and($t::sql_query(), <($($ts,)+)>::sql_query())
                 }
             }
 
+            impl<$t, $($ts,)+> Filter for Or<($t, $($ts,)+)>
+            where
+                $t: Filter,
+                $($ts: Filter,)+
+            {
+                fn sql_query() -> sea_query::SelectStatement {
+                    or($t::sql_query(), <($($ts,)+)>::sql_query())
+                }
+            }
+
+            impl<$t, $($ts,)+> Filter for Without<($t, $($ts,)+)>
+            where
+                $t: ComponentName,
+                $($ts: ComponentName,)+
+            {
+                fn sql_query() -> sea_query::SelectStatement {
+                    and(Without::<$t>::sql_query(), Without::<($($ts,)+)>::sql_query())
+                }
+            }
+
+
             filter_tuple_impl!($($ts),+);
         };
-
     }
 
     filter_tuple_impl!(A, B, C, D, E, F, G, H, I, J, K, L, M, O, P, Q, R, S, T, U, V, W, X, Y, Z);
+    // filter_tuple_impl!(A, B, C);
+
+    fn and(
+        a: sea_query::SelectStatement,
+        b: sea_query::SelectStatement,
+    ) -> sea_query::SelectStatement {
+        use sea_query::*;
+        Query::select()
+            .column(Asterisk)
+            .from_subquery(a, NullAlias)
+            .union(
+                UnionType::Intersect,
+                Query::select()
+                    .column(Asterisk)
+                    .from_subquery(b, NullAlias)
+                    .take(),
+            )
+            .take()
+    }
+
+    fn or(
+        a: sea_query::SelectStatement,
+        b: sea_query::SelectStatement,
+    ) -> sea_query::SelectStatement {
+        use sea_query::*;
+        Query::select()
+            .column(Asterisk)
+            .from_subquery(a, NullAlias)
+            .union(
+                UnionType::Distinct,
+                Query::select()
+                    .column(Asterisk)
+                    .from_subquery(b, NullAlias)
+                    .take(),
+            )
+            .take()
+    }
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -465,8 +441,21 @@ mod tests {
     fn queries() {
         let db = super::Ecs::open_in_memory().unwrap();
         let _ = db.query::<MarkerComponent>();
-        let _ = db.query::<With<MarkerComponent>>();
-        let _ = db.query::<And<MarkerComponent, Without<ComponentWithData>>>();
+        let _ = db.query::<Without<(MarkerComponent, MarkerComponent)>>();
+        let _ = db.query::<(
+            MarkerComponent,
+            Or<(
+                Without<(MarkerComponent, MarkerComponent)>,
+                (MarkerComponent, MarkerComponent),
+                Or<(MarkerComponent, Without<MarkerComponent>)>,
+            )>,
+        )>();
+        let _ = db.query::<(
+            MarkerComponent,
+            ComponentWithData,
+            Without<(MarkerComponent, MarkerComponent)>,
+        )>();
+        let _ = db.query::<(MarkerComponent, Without<ComponentWithData>)>();
         let _ = db.query::<(MarkerComponent, Without<ComponentWithData>)>();
         let _ = db.query::<(
             MarkerComponent,
@@ -492,22 +481,22 @@ mod tests {
 
         assert_eq!(db.query::<()>().count(), 2);
         assert_eq!(db.query::<MarkerComponent>().count(), 1);
-        assert_eq!(db.query::<With<MarkerComponent>>().count(), 1);
+        assert_eq!(db.query::<MarkerComponent>().count(), 1);
         assert_eq!(db.query::<Without<MarkerComponent>>().count(), 1);
         assert_eq!(
             db.query::<(MarkerComponent, ComponentWithData)>().count(),
             1
         );
         assert_eq!(
-            db.query::<(With<MarkerComponent>, Without<MarkerComponent>)>()
+            db.query::<(MarkerComponent, Without<MarkerComponent>)>()
                 .count(),
             0
         );
         assert_eq!(
             db.query::<(
-                With<MarkerComponent>,
+                MarkerComponent,
                 Without<MarkerComponent>,
-                Or<MarkerComponent, ComponentWithData>
+                Or<(MarkerComponent, ComponentWithData)>
             )>()
             .count(),
             0

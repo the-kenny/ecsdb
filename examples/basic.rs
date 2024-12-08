@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use ecsdb::Component;
 use serde::{Deserialize, Serialize};
 
@@ -29,10 +27,10 @@ pub fn main() -> Result<(), anyhow::Error> {
         DiaryEntry,
         Contents,
         Without<Date>,
-        Or<DiaryEntry, Contents>,
+        Or<(DiaryEntry, Contents)>,
     )>();
 
-    for entry in db.query::<With<And<DiaryEntry, Contents>>>() {
+    for entry in db.query::<(DiaryEntry, Contents)>() {
         println!("DiaryEntry",);
         println!("  id:\t{}", entry.id(),);
         println!(
