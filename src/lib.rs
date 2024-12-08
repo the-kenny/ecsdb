@@ -275,7 +275,7 @@ impl<'a> Entity<'a, WithEntityId> {
     }
 
     pub fn try_component<T: ComponentName>(&self) -> Result<Option<T>, Error> {
-        let name = std::any::type_name::<T>();
+        let name = T::component_name();
         let mut query = self
             .0
             .prepare("select data from components where entity = ?1 and component = ?2")?;
