@@ -46,29 +46,27 @@ pub trait ComponentName: Serialize + DeserializeOwned + Any {
     fn component_name() -> &'static str;
 }
 
-type EntityId = i64;
+pub type EntityId = i64;
 
 impl Ecs {
-    pub fn new_entity<'a>(&'a self) -> Entity<'a, WithoutEntityId> {
-        Entity(&self.conn, WithoutEntityId)
+    pub fn new_entity<'a>(&'a self) -> GenericEntity<'a, WithoutEntityId> {
+        GenericEntity(&self, WithoutEntityId)
     }
 
-    pub fn entity<'a>(&'a self, eid: EntityId) -> Entity<'a, WithEntityId> {
-        Entity(&self.conn, WithEntityId(eid))
+    pub fn entity<'a>(&'a self, eid: EntityId) -> Entity<'a> {
+        GenericEntity(&self, WithEntityId(eid))
     }
 }
 
 impl Ecs {
-    pub fn query<'a, Q>(&'a self) -> impl Iterator<Item = Entity<'a, WithEntityId>> + 'a
+    pub fn query<'a, Q>(&'a self) -> impl Iterator<Item = Entity<'a>> + 'a
     where
         Q: query::Filter + 'a,
     {
         self.try_query::<'a, Q>().unwrap()
     }
 
-    pub fn try_query<'a, Q>(
-        &'a self,
-    ) -> Result<impl Iterator<Item = Entity<'a, WithEntityId>> + 'a, Error>
+    pub fn try_query<'a, Q>(&'a self) -> Result<impl Iterator<Item = Entity<'a>> + 'a, Error>
     where
         Q: query::Filter + 'a,
     {
@@ -90,8 +88,8 @@ impl Ecs {
 
         debug!("Found {} entities", rows.len());
 
-        Ok(rows.into_iter().scan(&self.conn, |conn, eid| {
-            Some(Entity(&conn, WithEntityId(eid)))
+        Ok(rows.into_iter().scan(self, |conn, eid| {
+            Some(GenericEntity(&conn, WithEntityId(eid)))
         }))
     }
 }
@@ -262,12 +260,20 @@ pub mod query {
 pub struct WithoutEntityId;
 #[derive(Debug, Copy, Clone)]
 pub struct WithEntityId(EntityId);
-#[derive(Copy, Clone)]
-pub struct Entity<'a, S>(&'a rusqlite::Connection, S);
 
-impl<'a> Entity<'a, WithEntityId> {
+pub type Entity<'a> = GenericEntity<'a, WithEntityId>;
+pub type NewEntity<'a> = GenericEntity<'a, WithoutEntityId>;
+
+#[derive(Copy, Clone)]
+pub struct GenericEntity<'a, S>(&'a Ecs, S);
+
+impl<'a> GenericEntity<'a, WithEntityId> {
     pub fn id(&self) -> EntityId {
         (self.1).0
+    }
+
+    pub fn db(&self) -> &Ecs {
+        self.0
     }
 
     pub fn component<T: ComponentName>(&self) -> Option<T> {
@@ -278,6 +284,7 @@ impl<'a> Entity<'a, WithEntityId> {
         let name = T::component_name();
         let mut query = self
             .0
+            .conn
             .prepare("select data from components where entity = ?1 and component = ?2")?;
         let row = query
             .query_and_then(params![self.id(), name], |row| row.get::<_, String>("data"))?
@@ -295,7 +302,7 @@ impl<'a> Entity<'a, WithEntityId> {
     }
 }
 
-impl<'a> Entity<'a, WithEntityId> {
+impl<'a> GenericEntity<'a, WithEntityId> {
     pub fn attach<T: ComponentName>(self, component: T) -> Self {
         self.try_attach::<T>(component).unwrap()
     }
@@ -312,42 +319,56 @@ impl<'a> Entity<'a, WithEntityId> {
         let json =
             serde_json::to_string(&component).map_err(|e| Error::ComponentSave(e.to_string()))?;
 
-        self.0.execute(
+        self.0.conn.execute(
             "insert or replace into components (entity, component, data) values (?1, ?2, ?3)",
             params![self.id(), T::component_name(), json],
         )?;
+
+        debug!(
+            entity = self.id(),
+            component = T::component_name(),
+            "attached"
+        );
 
         Ok(self)
     }
 
     pub fn try_detach<T: ComponentName>(self) -> Result<Self, Error> {
-        self.0.execute(
+        self.0.conn.execute(
             "delete from components where entity = ?1 and component = ?2",
             params![self.id(), T::component_name()],
         )?;
+
+        debug!(
+            entity = self.id(),
+            component = T::component_name(),
+            "detached"
+        );
 
         Ok(self)
     }
 
     pub fn try_destroy(self) -> Result<(), Error> {
         self.0
+            .conn
             .execute("delete from components where entity = ?1", [])?;
+        debug!(entity = self.id(), "destroyed");
         Ok(())
     }
 }
 
-impl<'a> Entity<'a, WithoutEntityId> {
-    pub fn attach<T: ComponentName>(self, component: T) -> Entity<'a, WithEntityId> {
+impl<'a> GenericEntity<'a, WithoutEntityId> {
+    pub fn attach<T: ComponentName>(self, component: T) -> GenericEntity<'a, WithEntityId> {
         self.try_attach::<T>(component).unwrap()
     }
 
     pub fn try_attach<T: ComponentName>(
         self,
         component: T,
-    ) -> Result<Entity<'a, WithEntityId>, Error> {
+    ) -> Result<GenericEntity<'a, WithEntityId>, Error> {
         let json =
             serde_json::to_string(&component).map_err(|e| Error::ComponentSave(e.to_string()))?;
-        let eid = self.0.query_row_and_then(
+        let eid = self.0.conn.query_row_and_then(
             r#"
             insert into components (entity, component, data) 
             values ((select coalesce(max(entity)+1, 100) from components), ?1, ?2) 
@@ -356,7 +377,15 @@ impl<'a> Entity<'a, WithoutEntityId> {
             params![T::component_name(), json],
             |row| row.get::<_, EntityId>("entity"),
         )?;
-        Ok(Entity(self.0, WithEntityId(eid)))
+        let entity = GenericEntity(self.0, WithEntityId(eid));
+
+        debug!(
+            entity = entity.id(),
+            component = T::component_name(),
+            "attached"
+        );
+
+        Ok(entity)
     }
 
     pub fn detach<T: ComponentName>(&mut self) -> &mut Self {
@@ -368,13 +397,13 @@ impl<'a> Entity<'a, WithoutEntityId> {
     }
 }
 
-impl<'a> std::fmt::Debug for Entity<'a, WithoutEntityId> {
+impl<'a> std::fmt::Debug for GenericEntity<'a, WithoutEntityId> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_tuple("Entity").field(&self.1).finish()
     }
 }
 
-impl<'a> std::fmt::Debug for Entity<'a, WithEntityId> {
+impl<'a> std::fmt::Debug for GenericEntity<'a, WithEntityId> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_tuple("Entity").field(&self.1).finish()
     }
