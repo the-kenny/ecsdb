@@ -549,7 +549,7 @@ mod tests {
             B,
         }
 
-        let db = Ecs::open("foo.db").unwrap();
+        let db = Ecs::open_in_memory().unwrap();
         let entity = db.new_entity().attach(Foo::A);
         assert_eq!(entity.component::<Foo>().unwrap(), Foo::A);
     }
