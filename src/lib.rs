@@ -47,10 +47,6 @@ pub enum Error {
     Database(#[from] rusqlite::Error),
     #[error(transparent)]
     ComponentStorage(#[from] StorageError),
-    #[error("Failed to load Component: {0}")]
-    ComponentLoad(String),
-    #[error("Failed to save Component: {0}")]
-    ComponentSave(String),
 }
 
 pub trait Component: Sized + Any + ComponentRead<Self> + ComponentWrite<Self> {
@@ -538,7 +534,6 @@ impl<'a> GenericEntity<'a, WithEntityId> {
             None => Ok(None),
             Some(Ok(data)) => {
                 let component = T::from_rusqlite(data)?;
-                // serde_json::from_str(&data).map_err(|e| Error::ComponentLoad(e.to_string()))?;
                 Ok(Some(component))
             }
             _other => panic!(),
@@ -561,9 +556,6 @@ impl<'a> GenericEntity<'a, WithEntityId> {
 
     pub fn try_attach<T: Component>(self, component: T) -> Result<Self, Error> {
         let data = T::to_rusqlite(component)?;
-
-        // let json =
-        //     serde_json::to_string(&component).map_err(|e| Error::ComponentSave(e.to_string()))?;
 
         self.0.conn.execute(
             "insert or replace into components (entity, component, data) values (?1, ?2, ?3)",
