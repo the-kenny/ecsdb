@@ -1,4 +1,4 @@
-use std::{any::Any, path::Path};
+use std::{any::Any, borrow::Borrow, path::Path};
 
 use rusqlite::params;
 use serde::{de::DeserializeOwned, Serialize};
@@ -81,10 +81,42 @@ impl Ecs {
         let _span = debug_span!("query").entered();
 
         debug!("Running Query {}", std::any::type_name::<Q>());
+        self.fetch(Q::sql_query().distinct().take())
+    }
+}
 
-        use sea_query::*;
-        let sql = Q::sql_query().distinct().to_string(SqliteQueryBuilder);
-        debug!(%sql);
+impl Ecs {
+    pub fn find<'a, C: ComponentName>(
+        &'a self,
+        component: impl Borrow<C>,
+    ) -> impl Iterator<Item = Entity<'a>> + 'a {
+        self.try_find(component).unwrap()
+    }
+
+    pub fn try_find<'a, C: ComponentName>(
+        &'a self,
+        component: impl Borrow<C>,
+    ) -> Result<impl Iterator<Item = Entity<'a>> + 'a, Error> {
+        let _span = debug_span!("try_find").entered();
+
+        use sea_query::Expr;
+        let component_json = serde_json::to_string(component.borrow()).unwrap();
+        let query = <C as query::Filter>::sql_query()
+            .and_where(Expr::col(sql::Components::Data).eq(component_json))
+            .distinct()
+            .take();
+
+        self.fetch(query)
+    }
+}
+
+impl Ecs {
+    fn fetch<'a>(
+        &'a self,
+        stmt: sea_query::SelectStatement,
+    ) -> Result<impl Iterator<Item = Entity<'a>> + 'a, Error> {
+        let sql = stmt.to_string(sea_query::SqliteQueryBuilder);
+        debug!(sql);
 
         let rows = {
             let mut stmt = self.conn.prepare(&sql)?;
@@ -539,6 +571,19 @@ mod tests {
             0
         );
         assert_eq!(db.query::<ComponentWithData>().count(), 2);
+    }
+
+    #[test]
+    fn find() {
+        let db = Ecs::open_in_memory().unwrap();
+        let _ = db.new_entity().attach(ComponentWithData(123));
+        let _ = db.new_entity().attach(ComponentWithData(123));
+        let _ = db.new_entity().attach(ComponentWithData(255));
+
+        assert_eq!(db.find(MarkerComponent).count(), 0);
+        assert_eq!(db.find(ComponentWithData(0)).count(), 0);
+        assert_eq!(db.find(ComponentWithData(123)).count(), 2);
+        assert_eq!(db.find(ComponentWithData(255)).count(), 1);
     }
 
     #[test]
