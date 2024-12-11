@@ -45,14 +45,124 @@ impl Ecs {
 pub enum Error {
     #[error("Database Error: {0}")]
     Database(#[from] rusqlite::Error),
+    #[error(transparent)]
+    ComponentStorage(#[from] StorageError),
     #[error("Failed to load Component: {0}")]
     ComponentLoad(String),
     #[error("Failed to save Component: {0}")]
     ComponentSave(String),
 }
 
-pub trait ComponentName: Serialize + DeserializeOwned + Any {
+pub trait ComponentName: Sized + Any + ComponentRead<Self> + ComponentWrite<Self> {
+    type Storage;
+
     fn component_name() -> &'static str;
+}
+
+pub trait ComponentWrite<C> {
+    fn to_rusqlite(component: C) -> Result<rusqlite::types::Value, StorageError>;
+}
+
+pub trait ComponentRead<C> {
+    fn from_rusqlite(value: rusqlite::types::Value) -> Result<C, StorageError>;
+}
+
+impl<C, S> ComponentRead<Self> for C
+where
+    C: ComponentName<Storage = S>,
+    S: ComponentRead<C>,
+{
+    fn from_rusqlite(value: rusqlite::types::Value) -> Result<Self, StorageError> {
+        S::from_rusqlite(value)
+    }
+}
+
+impl<C, S> ComponentWrite<Self> for C
+where
+    C: ComponentName<Storage = S>,
+    S: ComponentWrite<C>,
+{
+    fn to_rusqlite(component: Self) -> Result<rusqlite::types::Value, StorageError> {
+        S::to_rusqlite(component)
+    }
+}
+
+pub struct JsonStorage;
+
+#[derive(thiserror::Error, Debug)]
+#[error("Error storing Component: {0}")]
+pub struct StorageError(String);
+
+impl<C> ComponentRead<C> for JsonStorage
+where
+    C: ComponentName + DeserializeOwned,
+{
+    fn from_rusqlite(value: rusqlite::types::Value) -> Result<C, StorageError> {
+        match value {
+            rusqlite::types::Value::Text(s) => {
+                serde_json::from_str(&s).map_err(|e| StorageError(e.to_string()))
+            }
+            other => Err(StorageError(format!("Unexpected type {other:?}"))),
+        }
+    }
+}
+
+impl<C> ComponentWrite<C> for JsonStorage
+where
+    C: ComponentName + Serialize,
+{
+    fn to_rusqlite(component: C) -> Result<rusqlite::types::Value, StorageError> {
+        let json = serde_json::to_string(&component).map_err(|e| StorageError(e.to_string()))?;
+        Ok(rusqlite::types::Value::Text(json))
+    }
+}
+
+pub struct BlobStorage;
+
+impl<C> ComponentRead<C> for BlobStorage
+where
+    C: ComponentName + From<Vec<u8>>,
+{
+    fn from_rusqlite(value: rusqlite::types::Value) -> Result<C, StorageError> {
+        match value {
+            rusqlite::types::Value::Blob(b) => Ok(C::from(b)),
+            other => Err(StorageError(format!("Unexpected type {other:?}"))),
+        }
+    }
+}
+
+impl<C> ComponentWrite<C> for BlobStorage
+where
+    C: ComponentName + Into<Vec<u8>>,
+{
+    fn to_rusqlite(component: C) -> Result<rusqlite::types::Value, StorageError> {
+        Ok(rusqlite::types::Value::Blob(component.into()))
+    }
+}
+
+pub struct NullStorage;
+
+impl<C> ComponentRead<C> for NullStorage
+where
+    C: ComponentName + DeserializeOwned,
+{
+    fn from_rusqlite(value: rusqlite::types::Value) -> Result<C, StorageError> {
+        match value {
+            rusqlite::types::Value::Null => {
+                serde_json::from_str("null").map_err(|e| StorageError(e.to_string()))
+            }
+            other => Err(StorageError(format!("Unexpected type {other:?}"))),
+        }
+    }
+}
+
+impl<C> ComponentWrite<C> for NullStorage
+where
+    C: ComponentName + Serialize,
+{
+    fn to_rusqlite(_component: C) -> Result<rusqlite::types::Value, StorageError> {
+        Ok(rusqlite::types::Value::Null)
+    }
 }
 
 pub type EntityId = i64;
@@ -114,7 +224,6 @@ impl Ecs {
         V: query::ValueFilter,
     {
         let sql = query.sql_query().to_string(sea_query::SqliteQueryBuilder);
-        println!("{sql}");
         debug!(sql);
 
         let rows = {
@@ -156,7 +265,6 @@ mod sql {
 }
 
 pub mod query {
-    use serde::Serialize;
 
     use crate::EntityId;
 
@@ -167,7 +275,7 @@ pub mod query {
         fn sql_query() -> sea_query::SelectStatement;
     }
 
-    pub trait ValueFilter: Serialize + Sized {
+    pub trait ValueFilter: Sized {
         fn sql_query(self) -> sea_query::SelectStatement;
     }
 
@@ -189,13 +297,28 @@ pub mod query {
         }
     }
 
-    impl<C: ComponentName + Serialize> ValueFilter for C {
+    impl<C> ValueFilter for C
+    where
+        C: ComponentName,
+    {
         fn sql_query(self) -> sea_query::SelectStatement {
             use sea_query::*;
-            let json = serde_json::to_string(&self).unwrap();
-            <Self as Filter>::sql_query()
-                .and_where(Expr::col(Components::Data).eq(json))
-                .take()
+            let expr = match C::to_rusqlite(self).unwrap() {
+                rusqlite::types::Value::Blob(blob) => {
+                    struct Unhex;
+                    impl Iden for Unhex {
+                        fn unquoted(&self, s: &mut dyn Write) {
+                            write!(s, "unhex").unwrap();
+                        }
+                    }
+
+                    Expr::col(Components::Data).eq(Func::cust(Unhex).arg(hex::encode_upper(blob)))
+                }
+                rusqlite::types::Value::Text(json) => Expr::col(Components::Data).eq(json),
+                rusqlite::types::Value::Null => Expr::col(Components::Data).is_null(),
+                other => unreachable!("{other:?}"),
+            };
+            <Self as Filter>::sql_query().and_where(expr).take()
         }
     }
 
@@ -406,14 +529,16 @@ impl<'a> GenericEntity<'a, WithEntityId> {
             .conn
             .prepare("select data from components where entity = ?1 and component = ?2")?;
         let row = query
-            .query_and_then(params![self.id(), name], |row| row.get::<_, String>("data"))?
+            .query_and_then(params![self.id(), name], |row| {
+                row.get::<_, rusqlite::types::Value>("data")
+            })?
             .next();
 
         match row {
             None => Ok(None),
             Some(Ok(data)) => {
-                let component =
-                    serde_json::from_str(&data).map_err(|e| Error::ComponentLoad(e.to_string()))?;
+                let component = T::from_rusqlite(data)?;
+                // serde_json::from_str(&data).map_err(|e| Error::ComponentLoad(e.to_string()))?;
                 Ok(Some(component))
             }
             _other => panic!(),
@@ -435,12 +560,14 @@ impl<'a> GenericEntity<'a, WithEntityId> {
     }
 
     pub fn try_attach<T: ComponentName>(self, component: T) -> Result<Self, Error> {
-        let json =
-            serde_json::to_string(&component).map_err(|e| Error::ComponentSave(e.to_string()))?;
+        let data = T::to_rusqlite(component)?;
+
+        // let json =
+        //     serde_json::to_string(&component).map_err(|e| Error::ComponentSave(e.to_string()))?;
 
         self.0.conn.execute(
             "insert or replace into components (entity, component, data) values (?1, ?2, ?3)",
-            params![self.id(), T::component_name(), json],
+            params![self.id(), T::component_name(), data],
         )?;
 
         debug!(
@@ -477,23 +604,25 @@ impl<'a> GenericEntity<'a, WithEntityId> {
 }
 
 impl<'a> GenericEntity<'a, WithoutEntityId> {
-    pub fn attach<T: ComponentName>(self, component: T) -> GenericEntity<'a, WithEntityId> {
+    pub fn attach<T: ComponentName + ComponentWrite<T>>(
+        self,
+        component: T,
+    ) -> GenericEntity<'a, WithEntityId> {
         self.try_attach::<T>(component).unwrap()
     }
 
-    pub fn try_attach<T: ComponentName>(
+    pub fn try_attach<T: ComponentName + ComponentWrite<T>>(
         self,
         component: T,
     ) -> Result<GenericEntity<'a, WithEntityId>, Error> {
-        let json =
-            serde_json::to_string(&component).map_err(|e| Error::ComponentSave(e.to_string()))?;
+        let data = T::to_rusqlite(component)?;
         let eid = self.0.conn.query_row_and_then(
             r#"
             insert into components (entity, component, data) 
             values ((select coalesce(max(entity)+1, 100) from components), ?1, ?2) 
             returning entity
             "#,
-            params![T::component_name(), json],
+            params![T::component_name(), data],
             |row| row.get::<_, EntityId>("entity"),
         )?;
         let entity = GenericEntity(self.0, WithEntityId(eid));
@@ -688,5 +817,20 @@ mod tests {
         let db = Ecs::open_in_memory().unwrap();
         let entity = db.new_entity().attach(Foo::A);
         assert_eq!(entity.component::<Foo>().unwrap(), Foo::A);
+    }
+
+    #[test]
+    fn blob_component() {
+        #[derive(Component, Debug, PartialEq, Clone)]
+        #[component(storage = "blob")]
+        struct X(Vec<u8>);
+
+        let x = X(b"asdfasdf".into());
+
+        let db = Ecs::open_in_memory().unwrap();
+        let entity = db.new_entity().attach(x.clone());
+
+        assert_eq!(entity.component::<X>().unwrap(), x.clone());
+        assert_eq!(db.find(x.clone()).next().unwrap().id(), entity.id());
     }
 }
