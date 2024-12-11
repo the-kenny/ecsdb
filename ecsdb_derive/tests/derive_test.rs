@@ -1,7 +1,7 @@
 struct JsonStorage;
 struct BlobStorage;
 struct NullStorage;
-trait ComponentName {
+trait Component {
     type Storage;
 
     fn component_name() -> &'static str;
@@ -9,7 +9,7 @@ trait ComponentName {
 
 #[test]
 fn test_macro() {
-    use crate as ecsdb; // Necessary for development as we derive `ecsdb::ComponentName for ...`
+    use crate as ecsdb; // Necessary for development as we derive `ecsdb::Component for ...`
     #[derive(ecsdb_derive::Component)]
     #[component(storage = "json")]
     struct Foo;

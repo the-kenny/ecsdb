@@ -53,7 +53,7 @@ pub enum Error {
     ComponentSave(String),
 }
 
-pub trait ComponentName: Sized + Any + ComponentRead<Self> + ComponentWrite<Self> {
+pub trait Component: Sized + Any + ComponentRead<Self> + ComponentWrite<Self> {
     type Storage;
 
     fn component_name() -> &'static str;
@@ -69,7 +69,7 @@ pub trait ComponentRead<C> {
 
 impl<C, S> ComponentRead<Self> for C
 where
-    C: ComponentName<Storage = S>,
+    C: Component<Storage = S>,
     S: ComponentRead<C>,
 {
     fn from_rusqlite(value: rusqlite::types::Value) -> Result<Self, StorageError> {
@@ -79,7 +79,7 @@ where
 
 impl<C, S> ComponentWrite<Self> for C
 where
-    C: ComponentName<Storage = S>,
+    C: Component<Storage = S>,
     S: ComponentWrite<C>,
 {
     fn to_rusqlite(component: Self) -> Result<rusqlite::types::Value, StorageError> {
@@ -95,7 +95,7 @@ pub struct StorageError(String);
 
 impl<C> ComponentRead<C> for JsonStorage
 where
-    C: ComponentName + DeserializeOwned,
+    C: Component + DeserializeOwned,
 {
     fn from_rusqlite(value: rusqlite::types::Value) -> Result<C, StorageError> {
         match value {
@@ -109,7 +109,7 @@ where
 
 impl<C> ComponentWrite<C> for JsonStorage
 where
-    C: ComponentName + Serialize,
+    C: Component + Serialize,
 {
     fn to_rusqlite(component: C) -> Result<rusqlite::types::Value, StorageError> {
         let json = serde_json::to_string(&component).map_err(|e| StorageError(e.to_string()))?;
@@ -121,7 +121,7 @@ pub struct BlobStorage;
 
 impl<C> ComponentRead<C> for BlobStorage
 where
-    C: ComponentName + From<Vec<u8>>,
+    C: Component + From<Vec<u8>>,
 {
     fn from_rusqlite(value: rusqlite::types::Value) -> Result<C, StorageError> {
         match value {
@@ -133,7 +133,7 @@ where
 
 impl<C> ComponentWrite<C> for BlobStorage
 where
-    C: ComponentName + Into<Vec<u8>>,
+    C: Component + Into<Vec<u8>>,
 {
     fn to_rusqlite(component: C) -> Result<rusqlite::types::Value, StorageError> {
         Ok(rusqlite::types::Value::Blob(component.into()))
@@ -144,7 +144,7 @@ pub struct NullStorage;
 
 impl<C> ComponentRead<C> for NullStorage
 where
-    C: ComponentName + DeserializeOwned,
+    C: Component + DeserializeOwned,
 {
     fn from_rusqlite(value: rusqlite::types::Value) -> Result<C, StorageError> {
         match value {
@@ -158,7 +158,7 @@ where
 
 impl<C> ComponentWrite<C> for NullStorage
 where
-    C: ComponentName + Serialize,
+    C: Component + Serialize,
 {
     fn to_rusqlite(_component: C) -> Result<rusqlite::types::Value, StorageError> {
         Ok(rusqlite::types::Value::Null)
@@ -268,7 +268,7 @@ pub mod query {
 
     use crate::EntityId;
 
-    use super::{sql::Components, ComponentName};
+    use super::{sql::Components, Component};
     use std::marker::PhantomData;
 
     pub trait Filter {
@@ -299,7 +299,7 @@ pub mod query {
 
     impl<C> ValueFilter for C
     where
-        C: ComponentName,
+        C: Component,
     {
         fn sql_query(self) -> sea_query::SelectStatement {
             use sea_query::*;
@@ -352,7 +352,7 @@ pub mod query {
         }
     }
 
-    impl<C: ComponentName> Filter for C {
+    impl<C: Component> Filter for C {
         fn sql_query() -> sea_query::SelectStatement {
             use sea_query::*;
             sea_query::Query::select()
@@ -364,7 +364,7 @@ pub mod query {
     }
 
     pub struct Without<C>(PhantomData<C>);
-    impl<C: ComponentName> Filter for Without<C> {
+    impl<C: Component> Filter for Without<C> {
         fn sql_query() -> sea_query::SelectStatement {
             use sea_query::*;
             Query::select()
@@ -403,8 +403,8 @@ pub mod query {
 
             impl<$t, $($ts,)+> Filter for Without<($t, $($ts,)+)>
             where
-                $t: ComponentName,
-                $($ts: ComponentName,)+
+                $t: Component,
+                $($ts: Component,)+
             {
                 fn sql_query() -> sea_query::SelectStatement {
                     and(Without::<$t>::sql_query(), Without::<($($ts,)+)>::sql_query())
@@ -441,7 +441,7 @@ pub mod query {
                 }
             }
 
-            impl<$t: ComponentName> Filter for Without<($t,)> {
+            impl<$t: Component> Filter for Without<($t,)> {
                 fn sql_query() -> sea_query::SelectStatement {
                     Without::<$t>::sql_query().take()
                 }
@@ -518,11 +518,11 @@ impl<'a> GenericEntity<'a, WithEntityId> {
         self.0
     }
 
-    pub fn component<T: ComponentName>(&self) -> Option<T> {
+    pub fn component<T: Component>(&self) -> Option<T> {
         self.try_component::<T>().unwrap()
     }
 
-    pub fn try_component<T: ComponentName>(&self) -> Result<Option<T>, Error> {
+    pub fn try_component<T: Component>(&self) -> Result<Option<T>, Error> {
         let name = T::component_name();
         let mut query = self
             .0
@@ -547,11 +547,11 @@ impl<'a> GenericEntity<'a, WithEntityId> {
 }
 
 impl<'a> GenericEntity<'a, WithEntityId> {
-    pub fn attach<T: ComponentName>(self, component: T) -> Self {
+    pub fn attach<T: Component>(self, component: T) -> Self {
         self.try_attach::<T>(component).unwrap()
     }
 
-    pub fn detach<T: ComponentName>(self) -> Self {
+    pub fn detach<T: Component>(self) -> Self {
         self.try_detach::<T>().unwrap()
     }
 
@@ -559,7 +559,7 @@ impl<'a> GenericEntity<'a, WithEntityId> {
         self.try_destroy().unwrap();
     }
 
-    pub fn try_attach<T: ComponentName>(self, component: T) -> Result<Self, Error> {
+    pub fn try_attach<T: Component>(self, component: T) -> Result<Self, Error> {
         let data = T::to_rusqlite(component)?;
 
         // let json =
@@ -579,7 +579,7 @@ impl<'a> GenericEntity<'a, WithEntityId> {
         Ok(self)
     }
 
-    pub fn try_detach<T: ComponentName>(self) -> Result<Self, Error> {
+    pub fn try_detach<T: Component>(self) -> Result<Self, Error> {
         self.0.conn.execute(
             "delete from components where entity = ?1 and component = ?2",
             params![self.id(), T::component_name()],
@@ -604,14 +604,14 @@ impl<'a> GenericEntity<'a, WithEntityId> {
 }
 
 impl<'a> GenericEntity<'a, WithoutEntityId> {
-    pub fn attach<T: ComponentName + ComponentWrite<T>>(
+    pub fn attach<T: Component + ComponentWrite<T>>(
         self,
         component: T,
     ) -> GenericEntity<'a, WithEntityId> {
         self.try_attach::<T>(component).unwrap()
     }
 
-    pub fn try_attach<T: ComponentName + ComponentWrite<T>>(
+    pub fn try_attach<T: Component + ComponentWrite<T>>(
         self,
         component: T,
     ) -> Result<GenericEntity<'a, WithEntityId>, Error> {
@@ -636,11 +636,11 @@ impl<'a> GenericEntity<'a, WithoutEntityId> {
         Ok(entity)
     }
 
-    pub fn detach<T: ComponentName>(&mut self) -> &mut Self {
+    pub fn detach<T: Component>(&mut self) -> &mut Self {
         self
     }
 
-    pub fn try_detach<T: ComponentName>(&mut self) -> Result<&mut Self, Error> {
+    pub fn try_detach<T: Component>(&mut self) -> Result<&mut Self, Error> {
         Ok(self)
     }
 }
@@ -659,10 +659,9 @@ impl<'a> std::fmt::Debug for GenericEntity<'a, WithEntityId> {
 
 #[cfg(test)]
 mod tests {
-    use crate::ComponentName;
-    use crate::{self as ecsdb, Ecs}; // #[derive(Component)] derives `impl ecsdb::ComponentName for ...`
+    use crate::Component;
+    use crate::{self as ecsdb, Ecs}; // #[derive(Component)] derives `impl ecsdb::Component for ...`
 
-    use ecsdb_derive::Component;
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Serialize, Deserialize, Component)]

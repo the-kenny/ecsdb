@@ -55,7 +55,7 @@ fn impl_derive_macro(ast: &syn::DeriveInput) -> TokenStream {
     let gen = match storage {
         Storage::Json => {
             quote! {
-                    impl ecsdb::ComponentName for #name {
+                    impl ecsdb::Component for #name {
                         type Storage =ecsdb::JsonStorage;
 
                         fn component_name() -> &'static str {
@@ -67,7 +67,7 @@ fn impl_derive_macro(ast: &syn::DeriveInput) -> TokenStream {
 
         Storage::Null => {
             quote! {
-                    impl ecsdb::ComponentName for #name {
+                    impl ecsdb::Component for #name {
                         type Storage = ecsdb::NullStorage;
 
                         fn component_name() -> &'static str {
@@ -79,7 +79,7 @@ fn impl_derive_macro(ast: &syn::DeriveInput) -> TokenStream {
 
         Storage::Blob => {
             quote! {
-                impl ecsdb::ComponentName for #name {
+                impl ecsdb::Component for #name {
                     type Storage =ecsdb::BlobStorage;
 
                     fn component_name() -> &'static str {
@@ -103,7 +103,7 @@ fn impl_derive_macro(ast: &syn::DeriveInput) -> TokenStream {
     };
 
     // let gen = quote! {
-    //     impl ecsdb::ComponentName for #name {
+    //     impl ecsdb::Component for #name {
     //         type Storage = #storage;
 
     //         fn component_name() -> &'static str {
@@ -111,7 +111,7 @@ fn impl_derive_macro(ast: &syn::DeriveInput) -> TokenStream {
     //         }
     //     }
 
-    //     // trait ComponentStorage: ComponentName {
+    //     // trait ComponentStorage: Component {
     //     //     fn to_rusqlite(self) -> rusqlite::types::Value;
     //     //     fn from_rusqlite(value: rusqlite::types::Value) -> Result<Self, rusqlite::Error>;
     //     // }
