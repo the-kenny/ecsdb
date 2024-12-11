@@ -1,5 +1,6 @@
-use std::{any::Any, borrow::Borrow, path::Path};
+use std::{any::Any, path::Path};
 
+use query::ValueFilter;
 use rusqlite::params;
 use serde::{de::DeserializeOwned, Serialize};
 use tracing::{debug, debug_span};
@@ -67,55 +68,53 @@ impl Ecs {
 }
 
 impl Ecs {
-    pub fn query<'a, Q>(&'a self) -> impl Iterator<Item = Entity<'a>> + 'a
+    pub fn query<'a, F>(&'a self) -> impl Iterator<Item = Entity<'a>> + 'a
     where
-        Q: query::Filter + 'a,
+        F: query::Filter + 'a,
     {
-        self.try_query::<'a, Q>().unwrap()
+        self.try_query::<'a, F>().unwrap()
     }
 
-    pub fn try_query<'a, Q>(&'a self) -> Result<impl Iterator<Item = Entity<'a>> + 'a, Error>
+    pub fn try_query<'a, F>(&'a self) -> Result<impl Iterator<Item = Entity<'a>> + 'a, Error>
     where
-        Q: query::Filter + 'a,
+        F: query::Filter + 'a,
     {
         let _span = debug_span!("query").entered();
 
-        debug!("Running Query {}", std::any::type_name::<Q>());
-        self.fetch(Q::sql_query().distinct().take())
+        debug!("Running Query {}", std::any::type_name::<F>());
+        self.fetch(query::Query::<F, ()>::new(()))
     }
 }
 
 impl Ecs {
-    pub fn find<'a, C: ComponentName>(
+    pub fn find<'a, V: ValueFilter>(
         &'a self,
-        component: impl Borrow<C>,
+        components: V,
     ) -> impl Iterator<Item = Entity<'a>> + 'a {
-        self.try_find(component).unwrap()
+        self.try_find(components).unwrap()
     }
 
-    pub fn try_find<'a, C: ComponentName>(
+    pub fn try_find<'a, V: ValueFilter>(
         &'a self,
-        component: impl Borrow<C>,
+        components: V,
     ) -> Result<impl Iterator<Item = Entity<'a>> + 'a, Error> {
         let _span = debug_span!("try_find").entered();
 
-        use sea_query::Expr;
-        let component_json = serde_json::to_string(component.borrow()).unwrap();
-        let query = <C as query::Filter>::sql_query()
-            .and_where(Expr::col(sql::Components::Data).eq(component_json))
-            .distinct()
-            .take();
-
-        self.fetch(query)
+        self.fetch(query::Query::<(), _>::new(components))
     }
 }
 
 impl Ecs {
-    fn fetch<'a>(
+    fn fetch<'a, F, V>(
         &'a self,
-        stmt: sea_query::SelectStatement,
-    ) -> Result<impl Iterator<Item = Entity<'a>> + 'a, Error> {
-        let sql = stmt.to_string(sea_query::SqliteQueryBuilder);
+        query: query::Query<F, V>,
+    ) -> Result<impl Iterator<Item = Entity<'a>> + 'a, Error>
+    where
+        F: query::Filter,
+        V: query::ValueFilter,
+    {
+        let sql = query.sql_query().to_string(sea_query::SqliteQueryBuilder);
+        println!("{sql}");
         debug!(sql);
 
         let rows = {
@@ -157,11 +156,67 @@ mod sql {
 }
 
 pub mod query {
+    use serde::Serialize;
+
+    use crate::EntityId;
+
     use super::{sql::Components, ComponentName};
     use std::marker::PhantomData;
 
     pub trait Filter {
         fn sql_query() -> sea_query::SelectStatement;
+    }
+
+    pub trait ValueFilter: Serialize + Sized {
+        fn sql_query(self) -> sea_query::SelectStatement;
+    }
+
+    impl ValueFilter for () {
+        fn sql_query(self) -> sea_query::SelectStatement {
+            <Self as Filter>::sql_query()
+        }
+    }
+
+    impl ValueFilter for EntityId {
+        fn sql_query(self) -> sea_query::SelectStatement {
+            use sea_query::*;
+            Query::select()
+                .column(Components::Entity)
+                .from(Components::Table)
+                .and_where(Expr::col(Components::Entity).eq(self))
+                .limit(1)
+                .take()
+        }
+    }
+
+    impl<C: ComponentName + Serialize> ValueFilter for C {
+        fn sql_query(self) -> sea_query::SelectStatement {
+            use sea_query::*;
+            let json = serde_json::to_string(&self).unwrap();
+            <Self as Filter>::sql_query()
+                .and_where(Expr::col(Components::Data).eq(json))
+                .take()
+        }
+    }
+
+    pub(crate) struct Query<F: ?Sized, C>(C, PhantomData<F>);
+
+    impl<F, C> Query<F, C> {
+        pub fn new(components: C) -> Self {
+            Self(components, PhantomData::default())
+        }
+    }
+
+    impl<F, C> Query<F, C>
+    where
+        F: Filter,
+        C: ValueFilter,
+    {
+        pub(crate) fn sql_query(self) -> sea_query::SelectStatement {
+            and(<F as Filter>::sql_query(), self.0.sql_query())
+                .distinct()
+                .take()
+        }
     }
 
     impl Filter for () {
@@ -192,7 +247,9 @@ pub mod query {
             Query::select()
                 .column(Components::Entity)
                 .from(Components::Table)
-                .and_where(Expr::col(Components::Entity).not_in_subquery(C::sql_query()))
+                .and_where(
+                    Expr::col(Components::Entity).not_in_subquery(<C as Filter>::sql_query()),
+                )
                 .take()
         }
     }
@@ -200,26 +257,6 @@ pub mod query {
     pub struct Or<T>(PhantomData<T>);
 
     macro_rules! filter_tuple_impl {
-        ($t:tt) => {
-            impl<$t: Filter> Filter for ($t,) {
-                fn sql_query() -> sea_query::SelectStatement {
-                    $t::sql_query().take()
-                }
-            }
-
-            impl<$t: Filter> Filter for Or<($t,)> {
-                fn sql_query() -> sea_query::SelectStatement {
-                    $t::sql_query().take()
-                }
-            }
-
-            impl<$t: ComponentName> Filter for Without<($t,)> {
-                fn sql_query() -> sea_query::SelectStatement {
-                    Without::<$t>::sql_query().take()
-                }
-            }
-        };
-
         ($t:tt, $($ts:tt),+) => {
             impl<$t, $($ts,)+> Filter for ($t, $($ts,)+)
             where
@@ -251,12 +288,54 @@ pub mod query {
                 }
             }
 
+            impl<$t, $($ts,)+> ValueFilter for ($t, $($ts,)+)
+            where
+                $t: ValueFilter,
+                $($ts: ValueFilter,)+
+            {
+                fn sql_query(self) -> sea_query::SelectStatement {
+                    and(self.0.sql_query(), self.1.sql_query())
+                }
+
+                // fn component_jsons(self) -> Vec<(&'static str, serde_json::Value)> {
+                //     self.1.component_jsons().into_iter().chain(<$t as ValueFilter>::component_jsons(self.0).into_iter()).collect()
+                // }
+            }
+
 
             filter_tuple_impl!($($ts),+);
         };
+        ($t:tt) => {
+            impl<$t: Filter> Filter for ($t,) {
+                fn sql_query() -> sea_query::SelectStatement {
+                    $t::sql_query().take()
+                }
+            }
+
+            impl<$t: Filter> Filter for Or<($t,)> {
+                fn sql_query() -> sea_query::SelectStatement {
+                    $t::sql_query().take()
+                }
+            }
+
+            impl<$t: ComponentName> Filter for Without<($t,)> {
+                fn sql_query() -> sea_query::SelectStatement {
+                    Without::<$t>::sql_query().take()
+                }
+            }
+
+            impl<$t: ValueFilter> ValueFilter for ($t,) {
+                // fn component_jsons(self) -> Vec<(&'static str, serde_json::Value)> {
+                //     <$t as ValueFilter>::component_jsons(self.0)
+                // }
+                fn sql_query(self) -> sea_query::SelectStatement {
+                    self.0.sql_query()
+                }
+            }
+        };
     }
 
-    filter_tuple_impl!(A, B, C, D, E, F, G, H, I, J, K, L, M, O, P, Q, R, S, T, U, V, W, X, Y, Z);
+    filter_tuple_impl!(A, B, C, D, E, F, G, H, I, J, K, L, M, O, P, Q);
     // filter_tuple_impl!(A, B, C);
 
     fn and(
@@ -576,14 +655,26 @@ mod tests {
     #[test]
     fn find() {
         let db = Ecs::open_in_memory().unwrap();
-        let _ = db.new_entity().attach(ComponentWithData(123));
+        let eid = db.new_entity().attach(ComponentWithData(123)).id();
         let _ = db.new_entity().attach(ComponentWithData(123));
         let _ = db.new_entity().attach(ComponentWithData(255));
 
+        assert_eq!(db.find(eid).count(), 1);
+        assert_eq!(db.find(eid).next().unwrap().id(), eid);
+        assert_eq!(db.find((eid, MarkerComponent)).count(), 0);
         assert_eq!(db.find(MarkerComponent).count(), 0);
         assert_eq!(db.find(ComponentWithData(0)).count(), 0);
         assert_eq!(db.find(ComponentWithData(123)).count(), 2);
         assert_eq!(db.find(ComponentWithData(255)).count(), 1);
+
+        let _ = db
+            .new_entity()
+            .attach(MarkerComponent)
+            .attach(ComponentWithData(12345));
+        assert_eq!(
+            db.find((MarkerComponent, ComponentWithData(12345))).count(),
+            1
+        );
     }
 
     #[test]
