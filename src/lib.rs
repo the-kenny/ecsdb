@@ -30,6 +30,14 @@ impl Ecs {
     pub fn close(self) -> Result<(), Error> {
         self.conn.close().map_err(|(_conn, e)| Error::Database(e))
     }
+
+    pub fn data_version(&self) -> Result<i64, Error> {
+        Ok(self
+            .conn
+            .query_row("select data_version from pragma_data_version", [], |x| {
+                x.get("data_version")
+            })?)
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
