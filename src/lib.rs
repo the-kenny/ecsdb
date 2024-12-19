@@ -1,11 +1,11 @@
 pub mod query;
 
-use std::{any::Any, path::Path};
+use std::{any::Any, iter, path::Path};
 
 use query::ValueFilter;
 use rusqlite::params;
-use serde::{de::DeserializeOwned, Serialize};
-use tracing::{debug, debug_span};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use tracing::{debug, debug_span, instrument, span};
 
 pub use ecsdb_derive::Component;
 
@@ -183,13 +183,12 @@ impl Ecs {
         self.try_query::<'a, F>().unwrap()
     }
 
+    #[instrument(name = "query", level = "debug", skip_all)]
     pub fn try_query<'a, F>(&'a self) -> Result<impl Iterator<Item = Entity<'a>> + 'a, Error>
     where
         F: query::Filter + 'a,
     {
-        let _span = debug_span!("query").entered();
-
-        debug!("Running Query {}", std::any::type_name::<F>());
+        debug!(query = std::any::type_name::<F>());
         self.fetch(query::Query::<F, ()>::new(()))
     }
 }
@@ -232,11 +231,89 @@ impl Ecs {
             rows.collect::<Vec<_>>()
         };
 
-        debug!("Found {} entities", rows.len());
+        debug!(matching_entity_count = rows.len());
 
         Ok(rows.into_iter().scan(self, |conn, eid| {
             Some(GenericEntity(&conn, WithEntityId(eid)))
         }))
+    }
+}
+
+use crate::{self as ecsdb};
+#[derive(Component, Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct BelongsTo(pub EntityId);
+
+impl Ecs {
+    fn direct_children<'a>(&'a self, entity: EntityId) -> impl Iterator<Item = Entity<'a>> + 'a {
+        self.find(BelongsTo(entity))
+    }
+
+    fn all_children<'a>(&'a self, entity: EntityId) -> impl Iterator<Item = Entity<'a>> + 'a {
+        let mut stack = self.direct_children(entity).collect::<Vec<_>>();
+        iter::from_fn(move || -> Option<Entity<'a>> {
+            let Some(entity) = stack.pop() else {
+                return None;
+            };
+
+            for entity in self.direct_children(entity.id()) {
+                stack.push(entity);
+            }
+
+            Some(entity)
+        })
+    }
+}
+
+impl<'a> Entity<'a> {
+    pub fn direct_children(&'a self) -> impl Iterator<Item = Entity<'a>> {
+        self.db().direct_children(self.id())
+    }
+
+    pub fn all_children(&'a self) -> impl Iterator<Item = Entity<'a>> + 'a {
+        self.db().all_children(self.id())
+    }
+
+    pub fn parent(&'a self) -> Option<Entity<'a>> {
+        self.component::<BelongsTo>()
+            .map(|BelongsTo(parent)| self.db().entity(parent))
+    }
+
+    pub fn parents(&'a self) -> impl Iterator<Item = Entity<'a>> + 'a {
+        let parent = self
+            .component::<BelongsTo>()
+            .map(|BelongsTo(parent)| self.db().entity(parent));
+
+        iter::successors(parent, |x| {
+            // For some reasons the lifetimes don't work out when we just call
+            // `x.parent()` here
+            x.component::<BelongsTo>()
+                .map(|BelongsTo(parent)| self.db().entity(parent))
+        })
+    }
+
+    #[tracing::instrument(level = "debug")]
+    pub fn destroy_recursive(&'a self) {
+        for entity in iter::once(*self).chain(self.all_children()) {
+            entity.destroy()
+        }
+    }
+}
+
+impl<'a> NewEntity<'a> {
+    pub fn direct_children(&'a self) -> impl Iterator<Item = Entity<'a>> + 'a {
+        iter::empty()
+    }
+
+    pub fn all_children(&'a self) -> impl Iterator<Item = Entity<'a>> + 'a {
+        iter::empty()
+    }
+
+    pub fn parent(&'a self) -> Option<Entity<'a>> {
+        None
+    }
+
+    pub fn parents(&'a self) -> impl Iterator<Item = Entity<'a>> + 'a {
+        iter::empty()
     }
 }
 
@@ -273,12 +350,12 @@ pub type NewEntity<'a> = GenericEntity<'a, WithoutEntityId>;
 #[derive(Copy, Clone)]
 pub struct GenericEntity<'a, S>(&'a Ecs, S);
 
-impl<'a> GenericEntity<'a, WithEntityId> {
+impl<'a> Entity<'a> {
     pub fn id(&self) -> EntityId {
         (self.1).0
     }
 
-    pub fn db(&self) -> &Ecs {
+    pub fn db(&'a self) -> &'a Ecs {
         self.0
     }
 
@@ -309,7 +386,7 @@ impl<'a> GenericEntity<'a, WithEntityId> {
     }
 }
 
-impl<'a> GenericEntity<'a, WithEntityId> {
+impl<'a> Entity<'a> {
     pub fn attach<T: Component>(self, component: T) -> Self {
         self.try_attach::<T>(component).unwrap()
     }
@@ -322,6 +399,7 @@ impl<'a> GenericEntity<'a, WithEntityId> {
         self.try_destroy().unwrap();
     }
 
+    #[tracing::instrument(name = "attach", level = "debug", skip_all)]
     pub fn try_attach<T: Component>(self, component: T) -> Result<Self, Error> {
         let data = T::to_rusqlite(component)?;
 
@@ -339,6 +417,7 @@ impl<'a> GenericEntity<'a, WithEntityId> {
         Ok(self)
     }
 
+    #[tracing::instrument(name = "detach", level = "debug")]
     pub fn try_detach<T: Component>(self) -> Result<Self, Error> {
         self.0.conn.execute(
             "delete from components where entity = ?1 and component = ?2",
@@ -354,6 +433,7 @@ impl<'a> GenericEntity<'a, WithEntityId> {
         Ok(self)
     }
 
+    #[tracing::instrument(name = "destroy", level = "debug")]
     pub fn try_destroy(self) -> Result<(), Error> {
         self.0
             .conn
@@ -363,7 +443,7 @@ impl<'a> GenericEntity<'a, WithEntityId> {
     }
 }
 
-impl<'a> GenericEntity<'a, WithoutEntityId> {
+impl<'a> NewEntity<'a> {
     pub fn attach<T: Component + ComponentWrite<T>>(
         self,
         component: T,
@@ -371,6 +451,11 @@ impl<'a> GenericEntity<'a, WithoutEntityId> {
         self.try_attach::<T>(component).unwrap()
     }
 
+    pub fn detach<T: Component>(&mut self) -> &mut Self {
+        self
+    }
+
+    #[tracing::instrument(name = "attach", level = "debug", skip_all)]
     pub fn try_attach<T: Component + ComponentWrite<T>>(
         self,
         component: T,
@@ -396,31 +481,28 @@ impl<'a> GenericEntity<'a, WithoutEntityId> {
         Ok(entity)
     }
 
-    pub fn detach<T: Component>(&mut self) -> &mut Self {
-        self
-    }
-
+    #[tracing::instrument(name = "detach", level = "debug", skip_all)]
     pub fn try_detach<T: Component>(&mut self) -> Result<&mut Self, Error> {
         Ok(self)
     }
 }
 
-impl<'a> std::fmt::Debug for GenericEntity<'a, WithoutEntityId> {
+impl<'a> std::fmt::Debug for NewEntity<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("Entity").field(&self.1).finish()
+        f.debug_tuple("Entity").field(&"nil").finish()
     }
 }
 
-impl<'a> std::fmt::Debug for GenericEntity<'a, WithEntityId> {
+impl<'a> std::fmt::Debug for Entity<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("Entity").field(&self.1).finish()
+        f.debug_tuple("Entity").field(&(self.1).0).finish()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::Component;
-    use crate::{self as ecsdb, Ecs}; // #[derive(Component)] derives `impl ecsdb::Component for ...`
+    use crate::{self as ecsdb, Ecs};
+    use crate::{BelongsTo, Component}; // #[derive(Component)] derives `impl ecsdb::Component for ...`
 
     use serde::{Deserialize, Serialize};
 
@@ -429,6 +511,12 @@ mod tests {
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, Component)]
     struct ComponentWithData(u64);
+
+    #[derive(Debug, Serialize, Deserialize, Component)]
+    struct A;
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Component)]
+    struct B;
 
     #[test]
     fn derive_valid_component_name() {
@@ -562,6 +650,50 @@ mod tests {
         assert_eq!(
             db.find((MarkerComponent, ComponentWithData(12345))).count(),
             1
+        );
+    }
+
+    #[test]
+    fn belongs_to() {
+        let db = Ecs::open_in_memory().unwrap();
+
+        let parent = db.new_entity().attach(A);
+        let child1 = db.new_entity().attach(A).attach(BelongsTo(parent.id()));
+        let child2 = db.new_entity().attach(A).attach(BelongsTo(child1.id()));
+
+        assert_eq!(
+            parent.direct_children().map(|e| e.id()).collect::<Vec<_>>(),
+            vec![child1.id()]
+        );
+
+        assert_eq!(
+            parent.all_children().map(|e| e.id()).collect::<Vec<_>>(),
+            vec![child1.id(), child2.id()]
+        );
+
+        assert_eq!(
+            child1.all_children().map(|e| e.id()).collect::<Vec<_>>(),
+            vec![child2.id()]
+        );
+
+        assert!(child2.all_children().next().is_none());
+    }
+
+    #[test]
+    fn parent() {
+        let db = Ecs::open_in_memory().unwrap();
+
+        let parent = db.new_entity().attach(A);
+        let child1 = db.new_entity().attach(A).attach(BelongsTo(parent.id()));
+        let child2 = db.new_entity().attach(A).attach(BelongsTo(child1.id()));
+
+        assert!(parent.parent().is_none());
+        assert_eq!(child1.parent().map(|e| e.id()), Some(parent.id()));
+        assert_eq!(child2.parent().map(|e| e.id()), Some(child1.id()));
+
+        assert_eq!(
+            child2.parents().map(|e| e.id()).collect::<Vec<_>>(),
+            vec![child1.id(), parent.id()]
         );
     }
 
