@@ -5,7 +5,7 @@ use std::{any::Any, iter, path::Path};
 use query::ValueFilter;
 use rusqlite::params;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use tracing::{debug, debug_span, instrument, span};
+use tracing::{debug, instrument};
 
 pub use ecsdb_derive::Component;
 
@@ -201,17 +201,17 @@ impl Ecs {
         self.try_find(components).unwrap()
     }
 
+    #[instrument(name = "find", level = "debug", skip_all)]
     pub fn try_find<'a, V: ValueFilter>(
         &'a self,
         components: V,
     ) -> Result<impl Iterator<Item = Entity<'a>> + 'a, Error> {
-        let _span = debug_span!("try_find").entered();
-
         self.fetch(query::Query::<(), _>::new(components))
     }
 }
 
 impl Ecs {
+    #[instrument(name = "fetch", level = "debug", skip_all)]
     fn fetch<'a, F, V>(
         &'a self,
         query: query::Query<F, V>,
@@ -231,7 +231,7 @@ impl Ecs {
             rows.collect::<Vec<_>>()
         };
 
-        debug!(matching_entity_count = rows.len());
+        debug!(count = rows.len());
 
         Ok(rows.into_iter().scan(self, |conn, eid| {
             Some(GenericEntity(&conn, WithEntityId(eid)))
