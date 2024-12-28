@@ -166,7 +166,7 @@ where
 pub type EntityId = i64;
 
 impl Ecs {
-    pub fn new_entity<'a>(&'a self) -> GenericEntity<'a, WithoutEntityId> {
+    pub fn new_entity<'a>(&'a self) -> NewEntity<'a> {
         GenericEntity(&self, WithoutEntityId)
     }
 
@@ -437,9 +437,21 @@ impl<'a> Entity<'a> {
     pub fn try_destroy(self) -> Result<(), Error> {
         self.0
             .conn
-            .execute("delete from components where entity = ?1", [])?;
+            .execute("delete from components where entity = ?1", [self.id()])?;
         debug!(entity = self.id(), "destroyed");
         Ok(())
+    }
+}
+
+impl<'a> NewEntity<'a> {
+    pub fn or_none(self) -> Option<Self> {
+        None
+    }
+}
+
+impl<'a> Entity<'a> {
+    pub fn or_none(self) -> Option<Self> {
+        Some(self)
     }
 }
 
