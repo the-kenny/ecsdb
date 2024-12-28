@@ -7,17 +7,17 @@ pub trait Filter {
     fn sql_query() -> sea_query::SelectStatement;
 }
 
-pub trait ValueFilter: Sized {
+pub trait DataFilter: Sized {
     fn sql_query(self) -> sea_query::SelectStatement;
 }
 
-impl ValueFilter for () {
+impl DataFilter for () {
     fn sql_query(self) -> sea_query::SelectStatement {
         <Self as Filter>::sql_query()
     }
 }
 
-impl ValueFilter for EntityId {
+impl DataFilter for EntityId {
     fn sql_query(self) -> sea_query::SelectStatement {
         use sea_query::*;
         Query::select()
@@ -29,7 +29,7 @@ impl ValueFilter for EntityId {
     }
 }
 
-impl<C> ValueFilter for C
+impl<C> DataFilter for C
 where
     C: Component,
 {
@@ -54,21 +54,24 @@ where
     }
 }
 
-pub(crate) struct Query<F: ?Sized, C>(C, PhantomData<F>);
+pub(crate) struct Query<F, D>(PhantomData<F>, D)
+where
+    F: ?Sized;
 
-impl<F, C> Query<F, C> {
-    pub fn new(components: C) -> Self {
-        Self(components, PhantomData::default())
+impl<F, D> Query<F, D> {
+    pub fn new(components: D) -> Self {
+        Self(PhantomData::default(), components)
     }
 }
 
-impl<F, C> Query<F, C>
+impl<F, D> Query<F, D>
 where
     F: Filter,
-    C: ValueFilter,
+    D: DataFilter,
 {
     pub(crate) fn sql_query(self) -> sea_query::SelectStatement {
-        and(<F as Filter>::sql_query(), self.0.sql_query())
+        let Query(_, data_filter) = self;
+        and(<F as Filter>::sql_query(), data_filter.sql_query())
             .distinct()
             .take()
     }
@@ -141,18 +144,14 @@ macro_rules! filter_tuple_impl {
             }
         }
 
-        impl<$t, $($ts,)+> ValueFilter for ($t, $($ts,)+)
+        impl<$t, $($ts,)+> DataFilter for ($t, $($ts,)+)
         where
-            $t: ValueFilter,
-            $($ts: ValueFilter,)+
+            $t: DataFilter,
+            $($ts: DataFilter,)+
         {
             fn sql_query(self) -> sea_query::SelectStatement {
                 and(self.0.sql_query(), self.1.sql_query())
             }
-
-            // fn component_jsons(self) -> Vec<(&'static str, serde_json::Value)> {
-            //     self.1.component_jsons().into_iter().chain(<$t as ValueFilter>::component_jsons(self.0).into_iter()).collect()
-            // }
         }
 
 
@@ -177,10 +176,7 @@ macro_rules! filter_tuple_impl {
             }
         }
 
-        impl<$t: ValueFilter> ValueFilter for ($t,) {
-            // fn component_jsons(self) -> Vec<(&'static str, serde_json::Value)> {
-            //     <$t as ValueFilter>::component_jsons(self.0)
-            // }
+        impl<$t: DataFilter> DataFilter for ($t,) {
             fn sql_query(self) -> sea_query::SelectStatement {
                 self.0.sql_query()
             }

@@ -2,7 +2,7 @@ pub mod query;
 
 use std::{any::Any, iter, path::Path};
 
-use query::ValueFilter;
+use query::DataFilter;
 use rusqlite::params;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tracing::{debug, instrument};
@@ -194,7 +194,7 @@ impl Ecs {
 }
 
 impl Ecs {
-    pub fn find<'a, V: ValueFilter>(
+    pub fn find<'a, V: DataFilter>(
         &'a self,
         components: V,
     ) -> impl Iterator<Item = Entity<'a>> + 'a {
@@ -202,7 +202,7 @@ impl Ecs {
     }
 
     #[instrument(name = "find", level = "debug", skip_all)]
-    pub fn try_find<'a, V: ValueFilter>(
+    pub fn try_find<'a, V: DataFilter>(
         &'a self,
         components: V,
     ) -> Result<impl Iterator<Item = Entity<'a>> + 'a, Error> {
@@ -218,7 +218,7 @@ impl Ecs {
     ) -> Result<impl Iterator<Item = Entity<'a>> + 'a, Error>
     where
         F: query::Filter,
-        V: query::ValueFilter,
+        V: query::DataFilter,
     {
         let sql = query.sql_query().to_string(sea_query::SqliteQueryBuilder);
         debug!(sql);
