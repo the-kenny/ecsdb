@@ -54,26 +54,39 @@ where
     }
 }
 
-pub(crate) struct Query<F, D>(PhantomData<F>, D)
+pub struct Query<'a, F, D = ()>
 where
-    F: ?Sized;
+    F: ?Sized,
+{
+    pub(crate) ecs: &'a crate::Ecs,
+    pub(crate) component_filter: PhantomData<F>,
+    pub(crate) data_filter: D,
+}
 
-impl<F, D> Query<F, D> {
-    pub fn new(components: D) -> Self {
-        Self(PhantomData::default(), components)
+impl<'a, F, D> Query<'a, F, D> {
+    pub fn new(ecs: &'a crate::Ecs, data_filter: D) -> Self {
+        Self {
+            ecs,
+            component_filter: PhantomData::default(),
+            data_filter,
+        }
     }
 }
 
-impl<F, D> Query<F, D>
+impl<'a, F, D> Query<'a, F, D>
 where
     F: Filter,
     D: DataFilter,
 {
     pub(crate) fn sql_query(self) -> sea_query::SelectStatement {
-        let Query(_, data_filter) = self;
+        let Query { data_filter, .. } = self;
         and(<F as Filter>::sql_query(), data_filter.sql_query())
             .distinct()
             .take()
+    }
+
+    pub fn try_iter(self) -> Result<impl Iterator<Item = crate::Entity<'a>> + 'a, crate::Error> {
+        self.ecs.fetch(self.sql_query())
     }
 }
 
@@ -215,4 +228,26 @@ fn or(a: sea_query::SelectStatement, b: sea_query::SelectStatement) -> sea_query
                 .take(),
         )
         .take()
+}
+
+#[cfg(test)]
+mod tests {
+    use serde::{Deserialize, Serialize};
+
+    use super::*;
+    use crate as ecsdb;
+
+    #[derive(Debug, Serialize, Deserialize, Component)]
+    struct A;
+
+    #[derive(Debug, Serialize, Deserialize, Component)]
+    struct B;
+
+    #[test]
+    #[allow(unused)]
+    fn system_fns() {
+        fn sys_a(query: Query<A>) {}
+        fn sys_b(query: Query<(A, Without<B>)>) {}
+        fn sys_c(query: Query<Or<(A, B)>>) {}
+    }
 }

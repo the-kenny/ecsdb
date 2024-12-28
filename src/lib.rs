@@ -43,6 +43,17 @@ impl Ecs {
     }
 }
 
+impl Ecs {
+    pub fn run<Fun, F>(&self, system: Fun)
+    where
+        Fun: FnOnce(query::Query<F>),
+        F: query::Filter,
+    {
+        let query = query::Query::new(self, ());
+        system(query);
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("Database Error: {0}")]
@@ -189,7 +200,8 @@ impl Ecs {
         F: query::Filter + 'a,
     {
         debug!(query = std::any::type_name::<F>());
-        self.fetch(query::Query::<F, ()>::new(()))
+        let query = query::Query::<F, ()>::new(self, ());
+        query.try_iter()
     }
 }
 
@@ -206,21 +218,19 @@ impl Ecs {
         &'a self,
         components: V,
     ) -> Result<impl Iterator<Item = Entity<'a>> + 'a, Error> {
-        self.fetch(query::Query::<(), _>::new(components))
+        let query = query::Query::<(), _>::new(self, components);
+        query.try_iter()
     }
 }
 
 impl Ecs {
     #[instrument(name = "fetch", level = "debug", skip_all)]
-    fn fetch<'a, F, V>(
+    fn fetch<'a>(
         &'a self,
-        query: query::Query<F, V>,
-    ) -> Result<impl Iterator<Item = Entity<'a>> + 'a, Error>
-    where
-        F: query::Filter,
-        V: query::DataFilter,
-    {
-        let sql = query.sql_query().to_string(sea_query::SqliteQueryBuilder);
+        sql_query: sea_query::SelectStatement,
+    ) -> Result<impl Iterator<Item = Entity<'a>> + 'a, Error> {
+        // let sql = query.sql_query().to_string(sea_query::SqliteQueryBuilder);
+        let sql = sql_query.to_string(sea_query::SqliteQueryBuilder);
         debug!(sql);
 
         let rows = {
@@ -735,5 +745,38 @@ mod tests {
 
         assert_eq!(entity.component::<X>().unwrap(), x.clone());
         assert_eq!(db.find(x.clone()).next().unwrap().id(), entity.id());
+    }
+}
+
+#[cfg(test)]
+mod system_tests {
+    use super::query::*;
+    use super::*;
+    use crate as ecsdb;
+
+    #[derive(Debug, Serialize, Deserialize, Component)]
+    struct A;
+
+    #[derive(Debug, Serialize, Deserialize, Component)]
+    struct B;
+
+    #[derive(Debug, Serialize, Deserialize, Component)]
+    struct Seen;
+
+    #[test]
+    fn run() {
+        let db = Ecs::open_in_memory().unwrap();
+        let a_and_b = db.new_entity().attach(A).attach(B);
+        let a = db.new_entity().attach(A);
+
+        fn system(query: Query<(A, B)>) {
+            for entity in query.try_iter().unwrap() {
+                entity.attach(Seen);
+            }
+        }
+
+        db.run(system);
+        assert!(a_and_b.component::<Seen>().is_some());
+        assert!(a.component::<Seen>().is_none());
     }
 }
