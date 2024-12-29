@@ -1,5 +1,8 @@
 pub mod query;
 
+mod system;
+pub use system::*;
+
 use std::{any::Any, iter, path::Path};
 
 use query::DataFilter;
@@ -11,6 +14,7 @@ pub use ecsdb_derive::Component;
 
 pub struct Ecs {
     conn: rusqlite::Connection,
+    systems: Vec<Box<dyn System<(), ()>>>,
 }
 
 impl Ecs {
@@ -25,7 +29,10 @@ impl Ecs {
     pub fn from_rusqlite(conn: rusqlite::Connection) -> Result<Self, Error> {
         conn.pragma_update(None, "journal_mode", "wal")?;
         conn.execute_batch(include_str!("schema.sql"))?;
-        Ok(Self { conn })
+        Ok(Self {
+            conn,
+            systems: Default::default(),
+        })
     }
 }
 
@@ -40,17 +47,6 @@ impl Ecs {
             .query_row("select data_version from pragma_data_version", [], |x| {
                 x.get("data_version")
             })?)
-    }
-}
-
-impl Ecs {
-    pub fn run<Fun, F>(&self, system: Fun)
-    where
-        Fun: FnOnce(query::Query<F>),
-        F: query::Filter,
-    {
-        let query = query::Query::new(self, ());
-        system(query);
     }
 }
 
@@ -485,8 +481,8 @@ impl<'a> NewEntity<'a> {
         let data = T::to_rusqlite(component)?;
         let eid = self.0.conn.query_row_and_then(
             r#"
-            insert into components (entity, component, data) 
-            values ((select coalesce(max(entity)+1, 100) from components), ?1, ?2) 
+            insert into components (entity, component, data)
+            values ((select coalesce(max(entity)+1, 100) from components), ?1, ?2)
             returning entity
             "#,
             params![T::component_name(), data],
@@ -765,17 +761,19 @@ mod system_tests {
 
     #[test]
     fn run() {
-        let db = Ecs::open_in_memory().unwrap();
-        let a_and_b = db.new_entity().attach(A).attach(B);
-        let a = db.new_entity().attach(A);
-
+        let mut db = Ecs::open_in_memory().unwrap();
         fn system(query: Query<(A, B)>) {
             for entity in query.try_iter().unwrap() {
                 entity.attach(Seen);
             }
         }
 
-        db.run(system);
+        db.register(system);
+
+        let a_and_b = db.new_entity().attach(A).attach(B);
+        let a = db.new_entity().attach(A);
+
+        db.tick();
         assert!(a_and_b.component::<Seen>().is_some());
         assert!(a.component::<Seen>().is_none());
     }

@@ -88,6 +88,10 @@ where
     pub fn try_iter(self) -> Result<impl Iterator<Item = crate::Entity<'a>> + 'a, crate::Error> {
         self.ecs.fetch(self.sql_query())
     }
+
+    pub fn into_iter(self) -> impl Iterator<Item = crate::Entity<'a>> + 'a {
+        self.try_iter().unwrap()
+    }
 }
 
 impl Filter for () {
