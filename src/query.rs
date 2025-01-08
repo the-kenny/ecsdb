@@ -85,6 +85,10 @@ where
             .take()
     }
 
+    pub fn db(&self) -> &crate::Ecs {
+        &self.ecs
+    }
+
     pub fn try_iter(self) -> Result<impl Iterator<Item = crate::Entity<'a>> + 'a, crate::Error> {
         self.ecs.fetch(self.sql_query())
     }
