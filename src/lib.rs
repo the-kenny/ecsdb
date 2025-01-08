@@ -7,6 +7,9 @@ pub use entity::{Entity, NewEntity};
 
 pub mod query;
 
+pub mod resource;
+pub use resource::*;
+
 mod system;
 pub use system::*;
 

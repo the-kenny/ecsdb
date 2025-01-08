@@ -6,7 +6,13 @@ use syn::{punctuated::Punctuated, Data, Expr, Fields, Lit, Meta, Token};
 #[proc_macro_derive(Component, attributes(component))]
 pub fn derive_component_fn(input: TokenStream) -> TokenStream {
     let ast = syn::parse(input).unwrap();
-    impl_derive_macro(&ast)
+    impl_derive_component(&ast)
+}
+
+#[proc_macro_derive(Resource, attributes(component))]
+pub fn derive_resource_fn(input: TokenStream) -> TokenStream {
+    let ast = syn::parse(input).unwrap();
+    impl_derive_resource(&ast)
 }
 
 #[derive(Debug)]
@@ -16,7 +22,7 @@ enum Storage {
     Null,
 }
 
-fn impl_derive_macro(ast: &syn::DeriveInput) -> TokenStream {
+fn impl_derive_component(ast: &syn::DeriveInput) -> TokenStream {
     let name = ast.ident.clone();
 
     let mut storage = Storage::Json;
@@ -55,7 +61,7 @@ fn impl_derive_macro(ast: &syn::DeriveInput) -> TokenStream {
     let gen = match storage {
         Storage::Json => {
             quote! {
-                    impl ecsdb::Component for #name {
+                    impl ecsdb::component::Component for #name {
                         type Storage =ecsdb::component::JsonStorage;
 
                         fn component_name() -> &'static str {
@@ -67,7 +73,7 @@ fn impl_derive_macro(ast: &syn::DeriveInput) -> TokenStream {
 
         Storage::Null => {
             quote! {
-                    impl ecsdb::Component for #name {
+                    impl ecsdb::component::Component for #name {
                         type Storage = ecsdb::component::NullStorage;
 
                         fn component_name() -> &'static str {
@@ -79,7 +85,7 @@ fn impl_derive_macro(ast: &syn::DeriveInput) -> TokenStream {
 
         Storage::Blob => {
             quote! {
-                impl ecsdb::Component for #name {
+                impl ecsdb::component::Component for #name {
                     type Storage = ecsdb::component::BlobStorage;
 
                     fn component_name() -> &'static str {
@@ -100,6 +106,20 @@ fn impl_derive_macro(ast: &syn::DeriveInput) -> TokenStream {
                 }
             }
         }
+    };
+
+    gen.into()
+}
+
+fn impl_derive_resource(ast: &syn::DeriveInput) -> TokenStream {
+    let name = ast.ident.clone();
+
+    let component_derive: proc_macro2::TokenStream = impl_derive_component(ast).into();
+
+    let gen = quote! {
+        #component_derive
+
+        impl ecsdb::resource::Resource for #name { }
     };
 
     gen.into()

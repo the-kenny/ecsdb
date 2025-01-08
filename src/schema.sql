@@ -8,7 +8,4 @@ create unique index if not exists components_entity_component_unqiue_idx on comp
 
 create index if not exists components_component_idx on components (component);
 
-create table if not exists resources (
-  resource text not null unique,
-  data blob
-);
+create table if not exists resources (name text not null unique, data blob);
