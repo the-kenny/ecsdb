@@ -56,7 +56,7 @@ fn impl_derive_macro(ast: &syn::DeriveInput) -> TokenStream {
         Storage::Json => {
             quote! {
                     impl ecsdb::Component for #name {
-                        type Storage =ecsdb::JsonStorage;
+                        type Storage =ecsdb::component::JsonStorage;
 
                         fn component_name() -> &'static str {
                             concat!(std::module_path!(), "::", stringify!(#name))
@@ -68,7 +68,7 @@ fn impl_derive_macro(ast: &syn::DeriveInput) -> TokenStream {
         Storage::Null => {
             quote! {
                     impl ecsdb::Component for #name {
-                        type Storage = ecsdb::NullStorage;
+                        type Storage = ecsdb::component::NullStorage;
 
                         fn component_name() -> &'static str {
                             concat!(std::module_path!(), "::", stringify!(#name))
@@ -80,7 +80,7 @@ fn impl_derive_macro(ast: &syn::DeriveInput) -> TokenStream {
         Storage::Blob => {
             quote! {
                 impl ecsdb::Component for #name {
-                    type Storage =ecsdb::BlobStorage;
+                    type Storage = ecsdb::component::BlobStorage;
 
                     fn component_name() -> &'static str {
                         concat!(std::module_path!(), "::", stringify!(#name))
@@ -101,27 +101,6 @@ fn impl_derive_macro(ast: &syn::DeriveInput) -> TokenStream {
             }
         }
     };
-
-    // let gen = quote! {
-    //     impl ecsdb::Component for #name {
-    //         type Storage = #storage;
-
-    //         fn component_name() -> &'static str {
-    //             concat!(std::module_path!(), "::", stringify!(#name))
-    //         }
-    //     }
-
-    //     // trait ComponentStorage: Component {
-    //     //     fn to_rusqlite(self) -> rusqlite::types::Value;
-    //     //     fn from_rusqlite(value: rusqlite::types::Value) -> Result<Self, rusqlite::Error>;
-    //     // }
-
-    //     // impl ecsdb::ComponentStorage for #name {
-    //     //         fn to_rusqlite(self) -> rusqlite::types::Value;
-    //     //         fn from_rusqlite(value: rusqlite::types::Value) -> Result<Self, rusqlite::Error>;
-    //     // }
-
-    // };
 
     gen.into()
 }
