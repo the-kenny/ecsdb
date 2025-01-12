@@ -92,7 +92,7 @@ impl Ecs {
     {
         debug!(query = std::any::type_name::<F>());
         let query = query::Query::<F, ()>::new(self, ());
-        query.try_iter()
+        query.try_into_iter()
     }
 }
 
@@ -110,7 +110,7 @@ impl Ecs {
         components: V,
     ) -> Result<impl Iterator<Item = Entity<'a>> + 'a, Error> {
         let query = query::Query::<(), _>::new(self, components);
-        query.try_iter()
+        query.try_into_iter()
     }
 }
 
@@ -433,7 +433,7 @@ mod system_tests {
     fn run() {
         let mut db = Ecs::open_in_memory().unwrap();
         fn system(query: Query<(A, B)>) {
-            for entity in query.try_iter().unwrap() {
+            for entity in query.try_into_iter().unwrap() {
                 entity.attach(Seen);
             }
         }

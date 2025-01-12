@@ -76,9 +76,30 @@ impl<'a, F, D> Query<'a, F, D> {
 impl<'a, F, D> Query<'a, F, D>
 where
     F: Filter,
+    D: DataFilter + Copy,
+{
+    pub(crate) fn as_sql_query(&self) -> sea_query::SelectStatement {
+        let Query { data_filter, .. } = self;
+        and(<F as Filter>::sql_query(), data_filter.sql_query())
+            .distinct()
+            .take()
+    }
+
+    pub fn try_iter(&self) -> Result<impl Iterator<Item = crate::Entity<'a>> + 'a, crate::Error> {
+        self.ecs.fetch(self.as_sql_query())
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = crate::Entity<'a>> + 'a {
+        self.try_iter().unwrap()
+    }
+}
+
+impl<'a, F, D> Query<'a, F, D>
+where
+    F: Filter,
     D: DataFilter,
 {
-    pub(crate) fn sql_query(self) -> sea_query::SelectStatement {
+    pub(crate) fn into_sql_query(self) -> sea_query::SelectStatement {
         let Query { data_filter, .. } = self;
         and(<F as Filter>::sql_query(), data_filter.sql_query())
             .distinct()
@@ -89,12 +110,14 @@ where
         &self.ecs
     }
 
-    pub fn try_iter(self) -> Result<impl Iterator<Item = crate::Entity<'a>> + 'a, crate::Error> {
-        self.ecs.fetch(self.sql_query())
+    pub fn try_into_iter(
+        self,
+    ) -> Result<impl Iterator<Item = crate::Entity<'a>> + 'a, crate::Error> {
+        self.ecs.fetch(self.into_sql_query())
     }
 
     pub fn into_iter(self) -> impl Iterator<Item = crate::Entity<'a>> + 'a {
-        self.try_iter().unwrap()
+        self.try_into_iter().unwrap()
     }
 }
 
