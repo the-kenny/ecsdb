@@ -31,7 +31,7 @@ pub enum Error {
 
 pub struct Ecs {
     conn: rusqlite::Connection,
-    systems: Vec<Box<dyn System<(), ()>>>,
+    systems: Vec<Box<dyn system::System>>,
 }
 
 impl Ecs {
@@ -433,13 +433,19 @@ mod system_tests {
     fn run() {
         let mut db = Ecs::open_in_memory().unwrap();
         fn system(query: Query<(A, B)>) {
-            for entity in query.try_into_iter().unwrap() {
+            for entity in query.try_iter().unwrap() {
                 entity.attach(Seen);
             }
         }
 
         db.register(system);
 
+        /**
+        rustc: `RefCell<hashlink::lru_cache::LruCache<Arc<str>, rusqlite::raw_statement::RawStatement>>` cannot be shared between threads safely
+        within `Ecs`, the trait `Sync` is not implemented for `RefCell<hashlink::lru_cache::LruCache<Arc<str>, rusqlite::raw_statement::RawStatement>>`, which is required by `for<'a> fn(query::Query<'a, (system_tests::A, system_tests::B)>) {system}: IntoSystem<_>`
+        if you want to do aliasing and mutation between multiple threads, use `std::sync::RwLock` instead
+        required for `&Ecs` to implement `Send`
+        required because it appears within the type `(query::Query<'_, (system_tests::A, system_tests::B)>,)` */
         let a_and_b = db.new_entity().attach(A).attach(B);
         let a = db.new_entity().attach(A);
 
