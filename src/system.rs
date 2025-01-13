@@ -68,40 +68,81 @@ where
     }
 }
 
-impl<F, Out, P1> SystemParamFunction<(P1,)> for F
-where
-    F: Send + Sync + 'static,
-    for<'a> &'a F: Fn(P1) -> Out + Fn(<P1 as SystemParam>::Item<'_>) -> Out,
-    P1: SystemParam,
-    Out: SystemOutput,
-{
-    type Param = (P1,);
-    fn run(&self, p1: <Self::Param as SystemParam>::Item<'_>) {
-        // #[allow(clippy::too_many_arguments)]
-        // fn call_inner<Out, P1>(f: impl Fn(P1) -> Out, p1: P1) -> Out {
-        //     f(p1)
-        // }
-        // let (p1,) = p1;
-        // call_inner(self, p1);
+type SystemParamItem<'world, P> = <P as SystemParam>::Item<'world>;
 
-        (&self)(p1.0);
-    }
+macro_rules! impl_system_function {
+    ($($param: ident),*) => {
+        impl<F, Out, $($param: SystemParam),*> SystemParamFunction<($($param,)*)> for F
+        where
+            F: Send + Sync + 'static,
+            for<'a> &'a F:
+                Fn($($param),*) -> Out
+                +
+                Fn($(SystemParamItem<$param>),*) -> Out,
+            Out: SystemOutput,
+        {
+            type Param = ($($param,)*);
+
+            #[allow(non_snake_case)]
+            #[allow(clippy::too_many_arguments)]
+            fn run(&self, p: SystemParamItem<($($param,)*)>) {
+                let ($($param,)*) = p;
+                (&self)( $($param),*);
+            }
+        }
+
+        impl<$($param: SystemParam,)*> SystemParam for ($($param,)*) {
+            type Item<'world> = ($($param::Item<'world>,)*);
+
+            fn get_param<'world>(world: &'world Ecs) -> Self::Item<'world> {
+                ($($param::get_param(world),)*)
+            }
+        }
+    };
 }
 
-impl<F, Out, P1, P2> SystemParamFunction<(P1, P2)> for F
-where
-    F: Send + Sync + 'static,
-    for<'a> &'a F:
-        Fn(P1, P2) -> Out + Fn(<P1 as SystemParam>::Item<'_>, <P2 as SystemParam>::Item<'_>) -> Out,
-    P1: SystemParam,
-    P2: SystemParam,
-    Out: SystemOutput,
-{
-    type Param = (P1, P2);
-    fn run(&self, p: <Self::Param as SystemParam>::Item<'_>) {
-        (&self)(p.0, p.1);
-    }
-}
+impl_system_function!(P1);
+impl_system_function!(P1, P2);
+impl_system_function!(P1, P2, P3);
+impl_system_function!(P1, P2, P3, P4);
+impl_system_function!(P1, P2, P3, P4, P5);
+impl_system_function!(P1, P2, P3, P4, P5, P6);
+impl_system_function!(P1, P2, P3, P4, P5, P6, P7);
+
+// impl<F, Out, P1> SystemParamFunction<(P1,)> for F
+// where
+//     F: Send + Sync + 'static,
+//     for<'a> &'a F: Fn(P1) -> Out + Fn(<P1 as SystemParam>::Item<'_>) -> Out,
+//     P1: SystemParam,
+//     Out: SystemOutput,
+// {
+//     type Param = (P1,);
+//     fn run(&self, p1: <Self::Param as SystemParam>::Item<'_>) {
+//         // #[allow(clippy::too_many_arguments)]
+//         // fn call_inner<Out, P1>(f: impl Fn(P1) -> Out, p1: P1) -> Out {
+//         //     f(p1)
+//         // }
+//         // let (p1,) = p1;
+//         // call_inner(self, p1);
+
+//         (&self)(p1.0);
+//     }
+// }
+
+// impl<F, Out, P1, P2> SystemParamFunction<(P1, P2)> for F
+// where
+//     F: Send + Sync + 'static,
+//     for<'a> &'a F:
+//         Fn(P1, P2) -> Out + Fn(<P1 as SystemParam>::Item<'_>, <P2 as SystemParam>::Item<'_>) -> Out,
+//     P1: SystemParam,
+//     P2: SystemParam,
+//     Out: SystemOutput,
+// {
+//     type Param = (P1, P2);
+//     fn run(&self, p: <Self::Param as SystemParam>::Item<'_>) {
+//         (&self)(p.0, p.1);
+//     }
+// }
 
 pub trait SystemParam: Sized {
     type Item<'world>: SystemParam;
@@ -116,21 +157,21 @@ impl SystemParam for () {
     }
 }
 
-impl<T1: SystemParam> SystemParam for (T1,) {
-    type Item<'world> = (T1::Item<'world>,);
+// impl<T1: SystemParam> SystemParam for (T1,) {
+//     type Item<'world> = (T1::Item<'world>,);
 
-    fn get_param<'world>(world: &'world Ecs) -> Self::Item<'world> {
-        (T1::get_param(world),)
-    }
-}
+//     fn get_param<'world>(world: &'world Ecs) -> Self::Item<'world> {
+//         (T1::get_param(world),)
+//     }
+// }
 
-impl<T1: SystemParam, T2: SystemParam> SystemParam for (T1, T2) {
-    type Item<'world> = (T1::Item<'world>, T2::Item<'world>);
+// impl<T1: SystemParam, T2: SystemParam> SystemParam for (T1, T2) {
+//     type Item<'world> = (T1::Item<'world>, T2::Item<'world>);
 
-    fn get_param<'world>(world: &'world Ecs) -> Self::Item<'world> {
-        (T1::get_param(world), T2::get_param(world))
-    }
-}
+//     fn get_param<'world>(world: &'world Ecs) -> Self::Item<'world> {
+//         (T1::get_param(world), T2::get_param(world))
+//     }
+// }
 
 impl Ecs {
     pub fn tick(&self) {
@@ -190,6 +231,10 @@ mod tests {
     fn multiple_params() {
         let mut ecs = Ecs::open_in_memory().unwrap();
         ecs.register(|_ecs: &Ecs, _q: query::Query<()>| ());
+        ecs.register(|_: &Ecs, _: &Ecs| ());
+        ecs.register(|_: &Ecs, _: &Ecs, _: &Ecs| ());
+        ecs.register(|_: &Ecs, _: &Ecs, _: &Ecs, _: &Ecs| ());
+        ecs.register(|_: &Ecs, _: &Ecs, _: &Ecs, _: &Ecs, _: &Ecs| ());
     }
 
     use crate as ecsdb;
