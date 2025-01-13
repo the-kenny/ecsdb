@@ -3,20 +3,19 @@ use tracing::debug;
 use crate::{query, Ecs};
 
 use core::marker::PhantomData;
+use std::borrow::Cow;
 
-/// This is what we store
 pub trait System: 'static + Send {
+    fn name(&self) -> Cow<'static, str>;
     fn run(&self, app: &Ecs);
 }
 
-/// Convert thing to system (to create a trait object)
 pub trait IntoSystem<Params> {
     type System: System;
 
     fn into_system(self) -> Self::System;
 }
 
-/// Convert any function with only system params into a system
 impl<F, Params: SystemParam + 'static> IntoSystem<Params> for F
 where
     F: SystemParamFunction<Params>,
@@ -31,25 +30,24 @@ where
     }
 }
 
-/// Represent a system with its params
-//
-// TODO: do stuff with params
 pub struct FunctionSystem<F: 'static, Params: SystemParam> {
     system: F,
     params: PhantomData<fn() -> Params>,
 }
 
-/// Make our wrapper be a System
 impl<F, Params: SystemParam + 'static> System for FunctionSystem<F, Params>
 where
     F: SystemParamFunction<Params>,
 {
+    fn name(&self) -> Cow<'static, str> {
+        Cow::Borrowed(std::any::type_name::<F>())
+    }
+
     fn run(&self, app: &Ecs) {
         SystemParamFunction::run(&self.system, F::Param::get_param(app));
     }
 }
 
-/// Function with only system params
 trait SystemParamFunction<Marker>: Send + Sync + 'static {
     type Param: SystemParam;
     fn run(&self, param: <Self::Param as SystemParam>::Item<'_>);
@@ -59,7 +57,6 @@ pub trait SystemOutput {}
 impl SystemOutput for () {}
 impl SystemOutput for Result<(), anyhow::Error> {}
 
-/// unit function
 impl<F, Out> SystemParamFunction<()> for F
 where
     F: Fn() -> Out + Send + Sync + 'static,
@@ -71,8 +68,7 @@ where
     }
 }
 
-/// one param function
-impl<F, Out, P1: SystemParam> SystemParamFunction<(P1,)> for F
+impl<F, Out, P1> SystemParamFunction<(P1,)> for F
 where
     F: Send + Sync + 'static,
     for<'a> &'a F: Fn(P1) -> Out + Fn(<P1 as SystemParam>::Item<'_>) -> Out,
@@ -92,6 +88,21 @@ where
     }
 }
 
+impl<F, Out, P1, P2> SystemParamFunction<(P1, P2)> for F
+where
+    F: Send + Sync + 'static,
+    for<'a> &'a F:
+        Fn(P1, P2) -> Out + Fn(<P1 as SystemParam>::Item<'_>, <P2 as SystemParam>::Item<'_>) -> Out,
+    P1: SystemParam,
+    P2: SystemParam,
+    Out: SystemOutput,
+{
+    type Param = (P1, P2);
+    fn run(&self, p: <Self::Param as SystemParam>::Item<'_>) {
+        (&self)(p.0, p.1);
+    }
+}
+
 pub trait SystemParam: Sized {
     type Item<'world>: SystemParam;
     fn get_param<'world>(world: &'world Ecs) -> Self::Item<'world>;
@@ -105,10 +116,7 @@ impl SystemParam for () {
     }
 }
 
-impl<T1> SystemParam for (T1,)
-where
-    T1: SystemParam,
-{
+impl<T1: SystemParam> SystemParam for (T1,) {
     type Item<'world> = (T1::Item<'world>,);
 
     fn get_param<'world>(world: &'world Ecs) -> Self::Item<'world> {
@@ -116,10 +124,18 @@ where
     }
 }
 
+impl<T1: SystemParam, T2: SystemParam> SystemParam for (T1, T2) {
+    type Item<'world> = (T1::Item<'world>, T2::Item<'world>);
+
+    fn get_param<'world>(world: &'world Ecs) -> Self::Item<'world> {
+        (T1::get_param(world), T2::get_param(world))
+    }
+}
+
 impl Ecs {
     pub fn tick(&self) {
         for system in &self.systems {
-            // let _span = tracing::info_span!("system", name = system.name().as_ref()).entered();
+            let _span = tracing::info_span!("system", name = system.name().as_ref()).entered();
             let started = std::time::Instant::now();
             debug!("Running");
             system.run(&self);
@@ -145,5 +161,79 @@ impl<F> SystemParam for query::Query<'_, F, ()> {
 
     fn get_param<'world>(world: &'world Ecs) -> Self::Item<'world> {
         query::Query::new(world, ())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{query, Ecs};
+
+    #[test]
+    fn no_param() {
+        let mut ecs = Ecs::open_in_memory().unwrap();
+        ecs.register(|| todo!());
+    }
+
+    #[test]
+    fn ecs_param() {
+        let mut ecs = Ecs::open_in_memory().unwrap();
+        ecs.register(|_ecs: &Ecs| ());
+    }
+
+    #[test]
+    fn query_param() {
+        let mut ecs = Ecs::open_in_memory().unwrap();
+        ecs.register(|_q: query::Query<()>| ());
+    }
+
+    #[test]
+    fn multiple_params() {
+        let mut ecs = Ecs::open_in_memory().unwrap();
+        ecs.register(|_ecs: &Ecs, _q: query::Query<()>| ());
+    }
+
+    use crate as ecsdb;
+    use ecsdb::Component;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Serialize, Deserialize, Component)]
+    struct A;
+
+    #[derive(Debug, Serialize, Deserialize, Component)]
+    struct B;
+
+    #[derive(Debug, Serialize, Deserialize, Component)]
+    struct Seen;
+
+    #[test]
+    fn run_query() {
+        let mut db = Ecs::open_in_memory().unwrap();
+        fn system(query: query::Query<(A, B)>) {
+            for entity in query.try_iter().unwrap() {
+                entity.attach(Seen);
+            }
+        }
+
+        db.register(system);
+
+        let a_and_b = db.new_entity().attach(A).attach(B);
+        let a = db.new_entity().attach(A);
+
+        db.tick();
+        assert!(a_and_b.component::<Seen>().is_some());
+        assert!(a.component::<Seen>().is_none());
+    }
+
+    #[test]
+    fn run_ecs() {
+        let mut db = Ecs::open_in_memory().unwrap();
+        fn system(ecs: &Ecs) {
+            ecs.new_entity().attach(Seen);
+        }
+
+        db.register(system);
+        db.tick();
+
+        assert!(db.find(Seen).next().is_some());
     }
 }
