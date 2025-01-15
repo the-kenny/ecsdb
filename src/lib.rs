@@ -5,6 +5,9 @@ pub use component::{Component, ComponentRead, ComponentWrite};
 pub mod entity;
 pub use entity::{Entity, NewEntity};
 
+pub mod hierarchy;
+pub use hierarchy::*;
+
 pub mod query;
 
 pub mod resource;
@@ -13,10 +16,9 @@ pub use resource::*;
 mod system;
 pub use system::*;
 
-use std::{iter, path::Path};
+use std::path::Path;
 
 use query::DataFilter;
-use serde::{Deserialize, Serialize};
 use tracing::{debug, instrument};
 
 pub type EntityId = i64;
@@ -137,31 +139,6 @@ impl Ecs {
         Ok(rows
             .into_iter()
             .scan(self, |ecs, eid| Some(Entity::with_id(&ecs, eid))))
-    }
-}
-
-use crate::{self as ecsdb};
-#[derive(Component, Clone, Copy, Debug, Serialize, Deserialize)]
-pub struct BelongsTo(pub EntityId);
-
-impl Ecs {
-    fn direct_children<'a>(&'a self, entity: EntityId) -> impl Iterator<Item = Entity<'a>> + 'a {
-        self.find(BelongsTo(entity))
-    }
-
-    fn all_children<'a>(&'a self, entity: EntityId) -> impl Iterator<Item = Entity<'a>> + 'a {
-        let mut stack = self.direct_children(entity).collect::<Vec<_>>();
-        iter::from_fn(move || -> Option<Entity<'a>> {
-            let Some(entity) = stack.pop() else {
-                return None;
-            };
-
-            for entity in self.direct_children(entity.id()) {
-                stack.push(entity);
-            }
-
-            Some(entity)
-        })
     }
 }
 
@@ -339,32 +316,6 @@ mod tests {
             db.find((MarkerComponent, ComponentWithData(12345))).count(),
             1
         );
-    }
-
-    #[test]
-    fn belongs_to() {
-        let db = Ecs::open_in_memory().unwrap();
-
-        let parent = db.new_entity().attach(A);
-        let child1 = db.new_entity().attach(A).attach(BelongsTo(parent.id()));
-        let child2 = db.new_entity().attach(A).attach(BelongsTo(child1.id()));
-
-        assert_eq!(
-            parent.direct_children().map(|e| e.id()).collect::<Vec<_>>(),
-            vec![child1.id()]
-        );
-
-        assert_eq!(
-            parent.all_children().map(|e| e.id()).collect::<Vec<_>>(),
-            vec![child1.id(), child2.id()]
-        );
-
-        assert_eq!(
-            child1.all_children().map(|e| e.id()).collect::<Vec<_>>(),
-            vec![child2.id()]
-        );
-
-        assert!(child2.all_children().next().is_none());
     }
 
     #[test]
