@@ -142,6 +142,16 @@ impl Ecs {
     }
 }
 
+pub mod rusqlite {
+    pub use rusqlite::*;
+}
+
+impl Ecs {
+    pub fn raw_sql<'a>(&'a self) -> &'a rusqlite::Connection {
+        &self.conn
+    }
+}
+
 mod sql {
     #[allow(unused)]
     pub enum Components {
