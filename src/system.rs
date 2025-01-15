@@ -7,7 +7,7 @@ use std::borrow::Cow;
 
 pub trait System: 'static + Send {
     fn name(&self) -> Cow<'static, str>;
-    fn run(&self, app: &Ecs);
+    fn run(&self, app: &Ecs) -> Result<(), anyhow::Error>;
 }
 
 pub trait IntoSystem<Params> {
@@ -43,28 +43,41 @@ where
         Cow::Borrowed(std::any::type_name::<F>())
     }
 
-    fn run(&self, app: &Ecs) {
-        SystemParamFunction::run(&self.system, F::Param::get_param(app));
+    fn run(&self, app: &Ecs) -> Result<(), anyhow::Error> {
+        SystemParamFunction::run(&self.system, F::Param::get_param(app)).into_result()
     }
 }
 
 trait SystemParamFunction<Marker>: Send + Sync + 'static {
     type Param: SystemParam;
-    fn run(&self, param: <Self::Param as SystemParam>::Item<'_>);
+    fn run(&self, param: <Self::Param as SystemParam>::Item<'_>) -> Result<(), anyhow::Error>;
 }
 
-pub trait SystemOutput {}
-impl SystemOutput for () {}
-impl SystemOutput for Result<(), anyhow::Error> {}
+pub trait SystemOutput {
+    fn into_result(self) -> Result<(), anyhow::Error>;
+}
+
+impl SystemOutput for () {
+    fn into_result(self) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
+}
+
+impl SystemOutput for Result<(), anyhow::Error> {
+    fn into_result(self) -> Result<(), anyhow::Error> {
+        self
+    }
+}
 
 impl<F, Out> SystemParamFunction<()> for F
 where
     F: Fn() -> Out + Send + Sync + 'static,
+    Out: SystemOutput,
 {
     type Param = ();
-    fn run(&self, _app: ()) {
+    fn run(&self, _app: ()) -> Result<(), anyhow::Error> {
         eprintln!("calling a function with no params");
-        self();
+        self().into_result()
     }
 }
 
@@ -85,9 +98,9 @@ macro_rules! impl_system_function {
 
             #[allow(non_snake_case)]
             #[allow(clippy::too_many_arguments)]
-            fn run(&self, p: SystemParamItem<($($param,)*)>) {
+            fn run(&self, p: SystemParamItem<($($param,)*)>) -> Result<(), anyhow::Error> {
                 let ($($param,)*) = p;
-                (&self)( $($param),*);
+                (&self)( $($param),*).into_result()
             }
         }
 
@@ -179,7 +192,7 @@ impl Ecs {
             let _span = tracing::info_span!("system", name = system.name().as_ref()).entered();
             let started = std::time::Instant::now();
             debug!("Running");
-            system.run(&self);
+            system.run(&self).unwrap();
             debug!(elapsed_ms = started.elapsed().as_millis(), "Finished",);
         }
     }
@@ -212,7 +225,7 @@ mod tests {
     #[test]
     fn no_param() {
         let mut ecs = Ecs::open_in_memory().unwrap();
-        ecs.register(|| todo!());
+        ecs.register(|| ());
     }
 
     #[test]
