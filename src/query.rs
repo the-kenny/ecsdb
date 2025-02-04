@@ -1,7 +1,7 @@
 use crate::EntityId;
 
 use super::{sql::Components, Component};
-use std::marker::PhantomData;
+use std::{any, marker::PhantomData};
 
 pub trait Filter {
     fn sql_query() -> sea_query::SelectStatement;
@@ -78,7 +78,7 @@ where
     F: Filter,
     D: DataFilter + Copy,
 {
-    pub(crate) fn as_sql_query(&self) -> sea_query::SelectStatement {
+    fn as_sql_query(&self) -> sea_query::SelectStatement {
         let Query { data_filter, .. } = self;
         and(<F as Filter>::sql_query(), data_filter.sql_query())
             .distinct()
@@ -86,11 +86,25 @@ where
     }
 
     pub fn try_iter(&self) -> Result<impl Iterator<Item = crate::Entity<'a>> + 'a, crate::Error> {
-        self.ecs.fetch(self.as_sql_query())
+        let mut query = self.as_sql_query();
+        query.order_by(Components::Entity, sea_query::Order::Asc);
+        self.ecs.fetch(query)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = crate::Entity<'a>> + 'a {
         self.try_iter().unwrap()
+    }
+
+    pub fn try_reverse_iter(
+        &self,
+    ) -> Result<impl Iterator<Item = crate::Entity<'a>> + 'a, crate::Error> {
+        let mut query = self.as_sql_query();
+        query.order_by(Components::Entity, sea_query::Order::Desc);
+        self.ecs.fetch(query)
+    }
+
+    pub fn reverse_iter(&self) -> impl Iterator<Item = crate::Entity<'a>> + 'a {
+        self.try_reverse_iter().unwrap()
     }
 }
 
@@ -101,9 +115,19 @@ where
 {
     pub(crate) fn into_sql_query(self) -> sea_query::SelectStatement {
         let Query { data_filter, .. } = self;
-        and(<F as Filter>::sql_query(), data_filter.sql_query())
-            .distinct()
-            .take()
+
+        // Short circuit to skip `select * from components intersect <real
+        // filter>` type of queries
+        let filter_allows_all = any::type_name::<F>() == any::type_name::<()>();
+        let data_filter_allows_all = any::type_name::<D>() == any::type_name::<()>();
+
+        let mut query = match (filter_allows_all, data_filter_allows_all) {
+            (true, false) => data_filter.sql_query(),
+            (false, true) => <F as Filter>::sql_query(),
+            _ => and(<F as Filter>::sql_query(), data_filter.sql_query()),
+        };
+
+        query.distinct().take()
     }
 
     pub fn db(&self) -> &crate::Ecs {
