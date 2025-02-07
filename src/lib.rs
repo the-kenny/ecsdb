@@ -193,6 +193,9 @@ mod tests {
     #[derive(Debug, Serialize, Deserialize, PartialEq, Component)]
     struct B;
 
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Component)]
+    struct C;
+
     #[test]
     fn derive_valid_component_name() {
         assert_eq!(
@@ -304,6 +307,33 @@ mod tests {
     }
 
     #[test]
+    fn or() {
+        let db = Ecs::open_in_memory().unwrap();
+        let a = db.new_entity().attach(A).id();
+        let b = db.new_entity().attach(B).id();
+        let c = db.new_entity().attach(C).id();
+
+        assert_eq!(
+            db.query::<Or<(A, B, C)>>()
+                .map(|e| e.id())
+                .collect::<Vec<_>>(),
+            vec![a, b, c]
+        );
+        assert_eq!(
+            db.query::<Or<(A, B)>>().map(|e| e.id()).collect::<Vec<_>>(),
+            vec![a, b]
+        );
+        assert_eq!(
+            db.query::<Or<(A,)>>().map(|e| e.id()).collect::<Vec<_>>(),
+            vec![a]
+        );
+        assert_eq!(
+            db.query::<Or<(B,)>>().map(|e| e.id()).collect::<Vec<_>>(),
+            vec![b]
+        );
+    }
+
+    #[test]
     fn find() {
         let db = Ecs::open_in_memory().unwrap();
         let eid = db.new_entity().attach(ComponentWithData(123)).id();
@@ -372,5 +402,22 @@ mod tests {
 
         assert_eq!(entity.component::<X>().unwrap(), x.clone());
         assert_eq!(db.find(x.clone()).next().unwrap().id(), entity.id());
+    }
+
+    #[test]
+    fn has_many() {
+        let db = Ecs::open_in_memory().unwrap();
+        let a = db.new_entity().attach(A);
+        assert!(a.has::<A>());
+        assert!(!a.has::<B>());
+
+        assert_eq!(a.has_many::<(A,)>(), [true]);
+        assert_eq!(a.has_many::<(A, B)>(), [true, false]);
+        assert_eq!(a.has_many::<(A, B, A)>(), [true, false, true]);
+
+        let ab = db.new_entity().attach(A).attach(B);
+        assert_eq!(ab.has_many::<(A, B)>(), [true, true]);
+        assert_eq!(ab.has_many::<(A, A)>(), [true, true]);
+        assert_eq!(ab.has_many::<(A, B, A)>(), [true, true, true]);
     }
 }

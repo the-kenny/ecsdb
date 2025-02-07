@@ -198,7 +198,7 @@ macro_rules! filter_tuple_impl {
             $($ts: Filter,)+
         {
             fn sql_query() -> sea_query::SelectStatement {
-                or($t::sql_query(), <($($ts,)+)>::sql_query())
+                or($t::sql_query(), <Or<($($ts,)+)>>::sql_query())
             }
         }
 
