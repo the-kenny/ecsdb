@@ -115,3 +115,40 @@ where
         Ok(rusqlite::types::Value::Null)
     }
 }
+
+pub trait ComponentSet {
+    const SIZE: usize;
+    type Array<T>: From<Self::Tuple<T>> + IntoIterator<Item = T> + AsRef<[T]> + TryFrom<Vec<T>>;
+    type Tuple<T>: From<Self::Array<T>>;
+
+    fn component_names() -> Self::Array<&'static str>;
+}
+
+macro_rules! type_as_other {
+    ( $a: ty, $b: ty ) => {
+        $b
+    };
+}
+
+macro_rules! impl_component_set {
+    ($s: literal, $($c: ident),*) => {
+        impl<$($c: Component),*> ComponentSet for ($($c,)*)
+        {
+            const SIZE: usize = $s;
+            type Array<T> = [T; $s];
+            type Tuple<T> = ($(type_as_other!($c, T),)*);
+
+            fn component_names() -> Self::Array<&'static str> {
+                [
+                    $($c::component_name()),*
+                ]
+            }
+        }
+    }}
+
+impl_component_set!(1, C1);
+impl_component_set!(2, C1, C2);
+impl_component_set!(3, C1, C2, C3);
+impl_component_set!(4, C1, C2, C3, C4);
+impl_component_set!(5, C1, C2, C3, C4, C5);
+impl_component_set!(6, C1, C2, C3, C4, C5, C6);

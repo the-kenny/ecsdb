@@ -1,9 +1,10 @@
-use std::iter;
+use std::{fmt::write, iter};
 
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
+use serde::{de::DeserializeOwned, Deserialize};
 use tracing::debug;
 
-use crate::{BelongsTo, Component, ComponentWrite, Ecs, EntityId, Error};
+use crate::{component::ComponentSet, BelongsTo, Component, ComponentWrite, Ecs, EntityId, Error};
 
 #[derive(Debug, Copy, Clone)]
 pub struct WithoutEntityId;
@@ -33,6 +34,36 @@ impl<'a> Entity<'a> {
 
     pub fn db(&'a self) -> &'a Ecs {
         self.0
+    }
+
+    pub fn has<T: Component>(&self) -> bool {
+        self.try_has::<T>().unwrap()
+    }
+
+    pub fn try_has<T: Component>(&self) -> Result<bool, Error> {
+        self.has_dynamic(T::component_name())
+    }
+
+    pub fn has_many<C: ComponentSet>(&self) -> C::Array<bool> {
+        let names = C::component_names();
+        let names = names
+            .into_iter()
+            .map(|name| self.has_dynamic(&name).unwrap())
+            .collect::<Vec<_>>();
+        C::Array::try_from(names).map_err(|_| ()).unwrap()
+    }
+
+    fn has_dynamic(&self, name: &str) -> Result<bool, Error> {
+        let row = self
+            .0
+            .conn
+            .query_row(
+                "select true from components where entity = ?1 and component = ?2",
+                params![self.id(), name],
+                |_| Ok(()),
+            )
+            .optional()?;
+        Ok(row.is_some())
     }
 
     pub fn component<T: Component>(&self) -> Option<T> {
@@ -73,6 +104,10 @@ impl<'a> Entity<'a> {
 
     pub fn destroy(self) {
         self.try_destroy().unwrap();
+    }
+
+    pub fn component_names(&self) -> impl Iterator<Item = String> {
+        self.try_component_names().unwrap()
     }
 
     #[tracing::instrument(name = "attach", level = "debug", skip_all)]
@@ -117,6 +152,18 @@ impl<'a> Entity<'a> {
         debug!(entity = self.id(), "destroyed");
         Ok(())
     }
+
+    #[tracing::instrument(name = "component_names", level = "debug")]
+    pub fn try_component_names(&self) -> Result<impl Iterator<Item = String>, Error> {
+        let mut stmt = self
+            .0
+            .conn
+            .prepare("select component from components where entity = ?1")?;
+        let names = stmt
+            .query_map(params![self.id()], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(names.into_iter())
+    }
 }
 
 impl<'a> NewEntity<'a> {
@@ -141,6 +188,10 @@ impl<'a> NewEntity<'a> {
 
     pub fn detach<T: Component>(&mut self) -> &mut Self {
         self
+    }
+
+    pub fn component_names(&self) -> impl Iterator<Item = String> {
+        std::iter::empty()
     }
 
     #[tracing::instrument(name = "attach", level = "debug", skip_all)]
@@ -172,6 +223,11 @@ impl<'a> NewEntity<'a> {
     #[tracing::instrument(name = "detach", level = "debug", skip_all)]
     pub fn try_detach<T: Component>(&mut self) -> Result<&mut Self, Error> {
         Ok(self)
+    }
+
+    #[tracing::instrument(name = "component_names", level = "debug")]
+    pub fn try_component_names(&self) -> Result<impl Iterator<Item = String>, Error> {
+        Ok(std::iter::empty())
     }
 }
 
