@@ -228,6 +228,18 @@ impl<'a> NewEntity<'a> {
     }
 }
 
+impl<'a> std::fmt::Display for NewEntity<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Entity").field(&"nil").finish()
+    }
+}
+
+impl<'a> std::fmt::Display for Entity<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Entity").field(&(self.1).0).finish()
+    }
+}
+
 impl<'a> std::fmt::Debug for NewEntity<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_tuple("Entity").field(&"nil").finish()
