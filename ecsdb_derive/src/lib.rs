@@ -63,10 +63,7 @@ fn impl_derive_component(ast: &syn::DeriveInput) -> TokenStream {
             quote! {
                     impl ecsdb::component::Component for #name {
                         type Storage =ecsdb::component::JsonStorage;
-
-                        fn component_name() -> &'static str {
-                            concat!(std::module_path!(), "::", stringify!(#name))
-                        }
+                        const NAME: &'static str = concat!(std::module_path!(), "::", stringify!(#name));
                     }
             }
         }
@@ -75,10 +72,7 @@ fn impl_derive_component(ast: &syn::DeriveInput) -> TokenStream {
             quote! {
                     impl ecsdb::component::Component for #name {
                         type Storage = ecsdb::component::NullStorage;
-
-                        fn component_name() -> &'static str {
-                            concat!(std::module_path!(), "::", stringify!(#name))
-                        }
+                        const NAME: &'static str = concat!(std::module_path!(), "::", stringify!(#name));
                     }
             }
         }
@@ -87,10 +81,7 @@ fn impl_derive_component(ast: &syn::DeriveInput) -> TokenStream {
             quote! {
                 impl ecsdb::component::Component for #name {
                     type Storage = ecsdb::component::BlobStorage;
-
-                    fn component_name() -> &'static str {
-                        concat!(std::module_path!(), "::", stringify!(#name))
-                    }
+                    const NAME: &'static str = concat!(std::module_path!(), "::", stringify!(#name));
                 }
 
                 impl Into<Vec<u8>> for #name {

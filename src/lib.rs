@@ -237,6 +237,16 @@ mod tests {
         assert_eq!(entity.component::<ComponentWithData>().unwrap().0, 23);
     }
 
+    #[test]
+    fn attaching_same_component_in_bundle_overwrites() {
+        let db = super::Ecs::open_in_memory().unwrap();
+
+        let entity = db
+            .new_entity()
+            .attach((ComponentWithData(42), ComponentWithData(23)));
+        assert_eq!(entity.component::<ComponentWithData>().unwrap().0, 23);
+    }
+
     use super::query::*;
 
     #[test]
@@ -411,13 +421,29 @@ mod tests {
         assert!(a.has::<A>());
         assert!(!a.has::<B>());
 
-        assert_eq!(a.has_many::<(A,)>(), [true]);
-        assert_eq!(a.has_many::<(A, B)>(), [true, false]);
-        assert_eq!(a.has_many::<(A, B, A)>(), [true, false, true]);
+        assert_eq!(a.has::<(A,)>(), true);
+        assert_eq!(a.has::<(A, B)>(), false);
+        assert_eq!(a.has::<(A, B, A)>(), false);
 
         let ab = db.new_entity().attach(A).attach(B);
-        assert_eq!(ab.has_many::<(A, B)>(), [true, true]);
-        assert_eq!(ab.has_many::<(A, A)>(), [true, true]);
-        assert_eq!(ab.has_many::<(A, B, A)>(), [true, true, true]);
+        assert_eq!(ab.has::<(A, B)>(), true);
+        assert_eq!(ab.has::<(A, A)>(), true);
+        assert_eq!(ab.has::<(A, B, A)>(), true);
+    }
+
+    #[test]
+    fn from_component_composite() -> Result<(), anyhow::Error> {
+        #[derive(Serialize, Deserialize, Component)]
+        struct A;
+        #[derive(Serialize, Deserialize, Component)]
+        struct B;
+
+        let db = super::Ecs::open_in_memory()?;
+        let _e = db.new_entity().attach((A, B));
+
+        // let ab = e.component::<(A, B)>();
+        // assert!(ab.is_some());
+
+        Ok(())
     }
 }

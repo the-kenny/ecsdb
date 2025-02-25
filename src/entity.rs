@@ -1,10 +1,9 @@
-use std::{fmt::write, iter};
+use std::iter;
 
-use rusqlite::{params, OptionalExtension};
-use serde::{de::DeserializeOwned, Deserialize};
+use rusqlite::params;
 use tracing::debug;
 
-use crate::{component::ComponentSet, BelongsTo, Component, ComponentWrite, Ecs, EntityId, Error};
+use crate::{component::Bundle, BelongsTo, Component, Ecs, EntityId, Error};
 
 #[derive(Debug, Copy, Clone)]
 pub struct WithoutEntityId;
@@ -18,11 +17,11 @@ pub type NewEntity<'a> = GenericEntity<'a, WithoutEntityId>;
 pub struct GenericEntity<'a, S>(&'a Ecs, S);
 
 impl<'a, T> GenericEntity<'a, T> {
-    pub(crate) fn without_id(ecs: &'a Ecs) -> NewEntity {
+    pub(crate) fn without_id(ecs: &'a Ecs) -> NewEntity<'a> {
         GenericEntity(ecs, WithoutEntityId)
     }
 
-    pub(crate) fn with_id(ecs: &'a Ecs, eid: EntityId) -> Entity {
+    pub(crate) fn with_id(ecs: &'a Ecs, eid: EntityId) -> Entity<'a> {
         GenericEntity(ecs, WithEntityId(eid))
     }
 }
@@ -36,34 +35,26 @@ impl<'a> Entity<'a> {
         self.0
     }
 
-    pub fn has<T: Component>(&self) -> bool {
-        self.try_has::<T>().unwrap()
+    pub fn has<B: Bundle>(&self) -> bool {
+        self.try_has::<B>().unwrap()
     }
 
-    pub fn try_has<T: Component>(&self) -> Result<bool, Error> {
-        self.has_dynamic(T::component_name())
+    pub fn try_has<B: Bundle>(&self) -> Result<bool, Error> {
+        self.has_all_dynamic(B::COMPONENTS)
     }
 
-    pub fn has_many<C: ComponentSet>(&self) -> C::Array<bool> {
-        let names = C::component_names();
-        let names = names
-            .into_iter()
-            .map(|name| self.has_dynamic(&name).unwrap())
-            .collect::<Vec<_>>();
-        C::Array::try_from(names).map_err(|_| ()).unwrap()
-    }
-
-    fn has_dynamic(&self, name: &str) -> Result<bool, Error> {
-        let row = self
+    fn has_all_dynamic(&self, component_names: &[&str]) -> Result<bool, Error> {
+        let mut stmt = self
             .0
             .conn
-            .query_row(
-                "select true from components where entity = ?1 and component = ?2",
-                params![self.id(), name],
-                |_| Ok(()),
-            )
-            .optional()?;
-        Ok(row.is_some())
+            .prepare("select true from components where entity = ?1 and component = ?2")?;
+        for name in component_names {
+            if !stmt.exists(params![self.id(), name])? {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
     }
 
     pub fn component<T: Component>(&self) -> Option<T> {
@@ -94,12 +85,12 @@ impl<'a> Entity<'a> {
 }
 
 impl<'a> Entity<'a> {
-    pub fn attach<T: Component>(self, component: T) -> Self {
-        self.try_attach::<T>(component).unwrap()
+    pub fn attach<B: Bundle>(self, component: B) -> Self {
+        self.try_attach::<B>(component).unwrap()
     }
 
-    pub fn detach<T: Component>(self) -> Self {
-        self.try_detach::<T>().unwrap()
+    pub fn detach<B: Bundle>(self) -> Self {
+        self.try_detach::<B>().unwrap()
     }
 
     pub fn destroy(self) {
@@ -111,35 +102,32 @@ impl<'a> Entity<'a> {
     }
 
     #[tracing::instrument(name = "attach", level = "debug", skip_all)]
-    pub fn try_attach<T: Component>(self, component: T) -> Result<Self, Error> {
-        let data = T::to_rusqlite(component)?;
+    pub fn try_attach<B: Bundle>(self, component: B) -> Result<Self, Error> {
+        let components = B::to_rusqlite(component)?;
 
-        self.0.conn.execute(
+        let mut stmt = self.0.conn.prepare(
             "insert or replace into components (entity, component, data) values (?1, ?2, ?3)",
-            params![self.id(), T::component_name(), data],
         )?;
 
-        debug!(
-            entity = self.id(),
-            component = T::component_name(),
-            "attached"
-        );
+        for (component, data) in components {
+            stmt.execute(params![self.id(), component, data])?;
+            debug!(entity = self.id(), component, "attached");
+        }
 
         Ok(self)
     }
 
     #[tracing::instrument(name = "detach", level = "debug")]
-    pub fn try_detach<T: Component>(self) -> Result<Self, Error> {
-        self.0.conn.execute(
-            "delete from components where entity = ?1 and component = ?2",
-            params![self.id(), T::component_name()],
-        )?;
+    pub fn try_detach<B: Bundle>(self) -> Result<Self, Error> {
+        let mut stmt = self
+            .0
+            .conn
+            .prepare("delete from components where entity = ?1 and component = ?2")?;
 
-        debug!(
-            entity = self.id(),
-            component = T::component_name(),
-            "detached"
-        );
+        for component in B::COMPONENTS {
+            stmt.execute(params![self.id(), component])?;
+            debug!(entity = self.id(), component, "detached");
+        }
 
         Ok(self)
     }
@@ -179,14 +167,11 @@ impl<'a> Entity<'a> {
 }
 
 impl<'a> NewEntity<'a> {
-    pub fn attach<T: Component + ComponentWrite<T>>(
-        self,
-        component: T,
-    ) -> GenericEntity<'a, WithEntityId> {
-        self.try_attach::<T>(component).unwrap()
+    pub fn attach<B: Bundle>(self, component: B) -> GenericEntity<'a, WithEntityId> {
+        self.try_attach::<B>(component).unwrap()
     }
 
-    pub fn detach<T: Component>(&mut self) -> &mut Self {
+    pub fn detach<B: Bundle>(&mut self) -> &mut Self {
         self
     }
 
@@ -195,33 +180,41 @@ impl<'a> NewEntity<'a> {
     }
 
     #[tracing::instrument(name = "attach", level = "debug", skip_all)]
-    pub fn try_attach<T: Component + ComponentWrite<T>>(
+    pub fn try_attach<B: Bundle>(
         self,
-        component: T,
+        bundle: B,
     ) -> Result<GenericEntity<'a, WithEntityId>, Error> {
-        let data = T::to_rusqlite(component)?;
-        let eid = self.0.conn.query_row_and_then(
+        let data = B::to_rusqlite(bundle)?;
+        assert!(!data.is_empty());
+
+        let mut stmt = self.0.conn.prepare(
             r#"
-            insert into components (entity, component, data)
-            values ((select coalesce(max(entity)+1, 100) from components), ?1, ?2)
+            insert or replace into components (entity, component, data)
+            values ((select coalesce(?1, max(entity)+1, 100) from components), ?2, ?3)
             returning entity
             "#,
-            params![T::component_name(), data],
-            |row| row.get::<_, EntityId>("entity"),
         )?;
-        let entity = GenericEntity(self.0, WithEntityId(eid));
 
-        debug!(
-            entity = entity.id(),
-            component = T::component_name(),
-            "attached"
-        );
+        let mut eid = None;
+        for (component, data) in data {
+            eid = Some(stmt.query_row(params![eid, component, data], |row| {
+                row.get::<_, EntityId>("entity")
+            })?);
+
+            debug!(entity = eid.unwrap(), component, "attached");
+        }
+
+        let Some(eid) = eid else {
+            panic!("Bundle::to_rusqlite returned zero rows. That shouldn't happen.")
+        };
+
+        let entity = GenericEntity(self.0, WithEntityId(eid));
 
         Ok(entity)
     }
 
     #[tracing::instrument(name = "detach", level = "debug", skip_all)]
-    pub fn try_detach<T: Component>(&mut self) -> Result<&mut Self, Error> {
+    pub fn try_detach<B: Bundle>(&mut self) -> Result<&mut Self, Error> {
         Ok(self)
     }
 
