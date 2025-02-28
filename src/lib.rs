@@ -446,4 +446,24 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn entity_matches() {
+        #[derive(Serialize, Deserialize, Component)]
+        struct A;
+        #[derive(Serialize, Deserialize, Component)]
+        struct B;
+
+        let db = super::Ecs::open_in_memory().unwrap();
+        let e = db.new_entity().attach(A);
+        let e2 = db.new_entity().attach((A, B));
+
+        assert!(e.matches::<A>());
+        assert!(!e.matches::<B>());
+        assert!(!e.matches::<(A, B)>());
+
+        assert!(e2.matches::<A>());
+        assert!(e2.matches::<B>());
+        assert!(e2.matches::<(A, B)>());
+    }
 }

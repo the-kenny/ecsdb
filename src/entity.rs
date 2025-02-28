@@ -3,7 +3,11 @@ use std::iter;
 use rusqlite::params;
 use tracing::debug;
 
-use crate::{component::Bundle, BelongsTo, Component, Ecs, EntityId, Error};
+use crate::{
+    component::Bundle,
+    query::{self, Filter},
+    BelongsTo, Component, Ecs, EntityId, Error,
+};
 
 #[derive(Debug, Copy, Clone)]
 pub struct WithoutEntityId;
@@ -81,6 +85,15 @@ impl<'a> Entity<'a> {
             }
             _other => panic!(),
         }
+    }
+
+    pub fn try_matches<F: Filter>(&self) -> Result<bool, Error> {
+        let q = query::Query::<F, _>::new(self.db(), self.id());
+        Ok(q.try_into_iter()?.next().is_some())
+    }
+
+    pub fn matches<F: Filter>(&self) -> bool {
+        self.try_matches::<F>().unwrap()
     }
 }
 
