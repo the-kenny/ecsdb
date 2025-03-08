@@ -119,7 +119,12 @@ impl<'a> Entity<'a> {
         let components = B::to_rusqlite(component)?;
 
         let mut stmt = self.0.conn.prepare(
-            "insert or replace into components (entity, component, data) values (?1, ?2, ?3)",
+            r#"
+            insert into components (entity, component, data)
+            values (?1, ?2, ?3)
+                on conflict (entity, component) do update
+                set data = excluded.data where data is not excluded.data;
+            "#,
         )?;
 
         for (component, data) in components {
