@@ -1,4 +1,4 @@
-use tracing::debug;
+use tracing::{debug, info_span};
 
 use crate::{query, Ecs};
 
@@ -199,6 +199,13 @@ impl Ecs {
 
     pub fn register<F: IntoSystem<Params>, Params: SystemParam>(&mut self, system: F) {
         self.systems.push(Box::new(system.into_system()));
+    }
+
+    pub fn system<'a>(&'a self, name: &str) -> Option<&'a dyn System> {
+        self.systems
+            .iter()
+            .find(|s| s.name() == name)
+            .map(|s| s.as_ref())
     }
 }
 
