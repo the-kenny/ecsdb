@@ -14,6 +14,7 @@ pub mod resource;
 pub use resource::*;
 
 mod system;
+use ::rusqlite::params;
 pub use system::*;
 
 use std::path::Path;
@@ -113,6 +114,36 @@ impl Ecs {
     ) -> Result<impl Iterator<Item = Entity<'a>> + 'a, Error> {
         let query = query::Query::<(), _>::new(self, components);
         query.try_into_iter()
+    }
+}
+
+impl Ecs {
+    /// Returns the highest `last_modified` from all components of `entity`.
+    /// Returns `chrono::DateTime::MIN_UTC` if `entity` has no components
+    fn try_last_modified(
+        &self,
+        entity: EntityId,
+    ) -> Result<chrono::DateTime<chrono::Utc>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare_cached(
+            "select max(last_modified) as last_modified from components where entity = ?",
+        )?;
+
+        let last_modified = stmt
+            .query_map(params![&entity], |row| {
+                row.get::<_, String>("last_modified")
+            })?
+            .map(|dt| dt.expect("Valid chrono::DateTime"))
+            .next();
+
+        let last_modified = if let Some(last_modified) = last_modified {
+            chrono::DateTime::parse_from_rfc3339(&last_modified)
+                .expect("Valid chrono::DateTime")
+                .to_utc()
+        } else {
+            chrono::DateTime::<chrono::Utc>::MIN_UTC
+        };
+
+        Ok(last_modified)
     }
 }
 
@@ -465,5 +496,25 @@ mod tests {
         assert!(e2.matches::<A>());
         assert!(e2.matches::<B>());
         assert!(e2.matches::<(A, B)>());
+    }
+
+    #[test]
+    fn last_modified() {
+        #[derive(Serialize, Deserialize, Component)]
+        struct A;
+        #[derive(Serialize, Deserialize, Component)]
+        struct B;
+
+        let db = super::Ecs::open_in_memory().unwrap();
+        let e = db.new_entity().attach(A);
+
+        assert!(e.last_modified() > chrono::Utc::now() - chrono::Duration::minutes(1));
+
+        let old = e.last_modified();
+
+        std::thread::sleep(std::time::Duration::from_millis(2));
+
+        e.attach(B);
+        assert!(e.last_modified() > old);
     }
 }

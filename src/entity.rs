@@ -114,6 +114,10 @@ impl<'a> Entity<'a> {
         self.try_component_names().unwrap()
     }
 
+    pub fn last_modified(&self) -> chrono::DateTime<chrono::Utc> {
+        self.try_last_modified().expect("Non-Error")
+    }
+
     #[tracing::instrument(name = "attach", level = "debug", skip_all)]
     pub fn try_attach<B: Bundle>(self, component: B) -> Result<Self, Error> {
         let components = B::to_rusqlite(component)?;
@@ -169,6 +173,11 @@ impl<'a> Entity<'a> {
             .query_map(params![self.id()], |row| row.get(0))?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(names.into_iter())
+    }
+
+    #[tracing::instrument(name = "last_modified", level = "debug")]
+    pub fn try_last_modified(&self) -> Result<chrono::DateTime<chrono::Utc>, Error> {
+        self.0.try_last_modified(self.id()).map_err(Error::from)
     }
 }
 
