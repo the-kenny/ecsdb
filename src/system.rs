@@ -1,4 +1,4 @@
-use tracing::{debug, info_span};
+use tracing::{debug, error, info_span};
 
 use crate::{query, Ecs};
 
@@ -192,7 +192,10 @@ impl Ecs {
             let _span = tracing::info_span!("system", name = system.name().as_ref()).entered();
             let started = std::time::Instant::now();
             debug!("Running");
-            system.run(&self).unwrap();
+            if let Err(e) = system.run(&self) {
+                error!(?e);
+            }
+
             debug!(elapsed_ms = started.elapsed().as_millis(), "Finished",);
         }
     }
