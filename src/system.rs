@@ -1,4 +1,4 @@
-use tracing::{debug, error, info_span};
+use tracing::{debug, error};
 
 use crate::{query, Ecs};
 

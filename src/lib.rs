@@ -130,9 +130,11 @@ impl Ecs {
 
         let last_modified = stmt
             .query_map(params![&entity], |row| {
-                row.get::<_, String>("last_modified")
+                row.get::<_, Option<String>>("last_modified")
             })?
-            .map(|dt| dt.expect("Valid chrono::DateTime"))
+            .flat_map(|dt| {
+                dt.unwrap_or_else(|e| panic!("max(last_modified) on {entity} TEXT error={e}"))
+            })
             .next();
 
         let last_modified = if let Some(last_modified) = last_modified {
