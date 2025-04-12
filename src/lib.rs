@@ -5,6 +5,9 @@ pub use component::{Component, ComponentRead, ComponentWrite};
 pub mod entity;
 pub use entity::{Entity, NewEntity};
 
+pub mod extension;
+pub use extension::Extension;
+
 pub mod hierarchy;
 pub use hierarchy::*;
 
@@ -35,6 +38,7 @@ pub enum Error {
 pub struct Ecs {
     conn: rusqlite::Connection,
     systems: Vec<Box<dyn system::System>>,
+    extensions: anymap::AnyMap,
 }
 
 impl Ecs {
@@ -52,6 +56,7 @@ impl Ecs {
         Ok(Self {
             conn,
             systems: Default::default(),
+            extensions: anymap::Map::new(),
         })
     }
 }
@@ -209,7 +214,8 @@ mod sql {
 
 #[cfg(test)]
 mod tests {
-    use crate::{self as ecsdb, Ecs}; // #[derive(Component)] derives `impl ecsdb::Component for ...`
+    // #[derive(Component)] derives `impl ecsdb::Component for ...`
+    use crate::{self as ecsdb, Ecs};
     use crate::{BelongsTo, Component};
 
     use serde::{Deserialize, Serialize};

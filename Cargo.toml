@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.94"
+anymap = "0.12.1"
 chrono = { version = "0.4.38", features = ["serde"] }
 ecsdb_derive = { path = "ecsdb_derive" }
 eloquent = "2.0.3"
