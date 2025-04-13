@@ -4,7 +4,7 @@ use crate::{Ecs, SystemParam};
 #[error("Extension already registered")]
 pub struct ExtensionExistsError;
 
-pub trait Extension {
+pub trait Extension: Send {
     // fn create(ecs: &Ecs) -> Self;
 }
 
