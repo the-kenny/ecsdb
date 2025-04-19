@@ -11,7 +11,7 @@ pub trait Extension: Send {
 impl<E: Extension + 'static> SystemParam for &E {
     type Item<'world> = &'world E;
 
-    fn get_param<'world>(world: &'world Ecs) -> Self::Item<'world> {
+    fn get_param<'world>(world: &'world Ecs, _system: &str) -> Self::Item<'world> {
         world.extension::<E>()
     }
 }

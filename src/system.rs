@@ -44,7 +44,7 @@ where
     }
 
     fn run(&self, app: &Ecs) -> Result<(), anyhow::Error> {
-        SystemParamFunction::run(&self.system, F::Param::get_param(app)).into_result()
+        SystemParamFunction::run(&self.system, F::Param::get_param(app, &self.name())).into_result()
     }
 }
 
@@ -107,8 +107,8 @@ macro_rules! impl_system_function {
         impl<$($param: SystemParam,)*> SystemParam for ($($param,)*) {
             type Item<'world> = ($($param::Item<'world>,)*);
 
-            fn get_param<'world>(world: &'world Ecs) -> Self::Item<'world> {
-                ($($param::get_param(world),)*)
+            fn get_param<'world>(world: &'world Ecs, system: &str) -> Self::Item<'world> {
+                ($($param::get_param(world, system),)*)
             }
         }
     };
@@ -159,13 +159,13 @@ impl_system_function!(P1, P2, P3, P4, P5, P6, P7);
 
 pub trait SystemParam: Sized {
     type Item<'world>: SystemParam;
-    fn get_param<'world>(world: &'world Ecs) -> Self::Item<'world>;
+    fn get_param<'world>(world: &'world Ecs, system: &str) -> Self::Item<'world>;
 }
 
 impl SystemParam for () {
     type Item<'world> = ();
 
-    fn get_param<'world>(_world: &'world Ecs) -> Self::Item<'world> {
+    fn get_param<'world>(_world: &'world Ecs, _system: &str) -> Self::Item<'world> {
         ()
     }
 }
