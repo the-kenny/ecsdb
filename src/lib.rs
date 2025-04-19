@@ -16,7 +16,7 @@ pub mod query;
 pub mod resource;
 pub use resource::*;
 
-mod system;
+pub mod system;
 use ::rusqlite::params;
 pub use system::*;
 

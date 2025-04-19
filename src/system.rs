@@ -1,9 +1,16 @@
+use serde::{Deserialize, Serialize};
 use tracing::{debug, error};
 
-use crate::{query, Ecs};
+use crate::{self as ecsdb, query, Component, Ecs, Entity, EntityId};
 
 use core::marker::PhantomData;
 use std::borrow::Cow;
+
+#[derive(Serialize, Deserialize, Component, Debug, PartialEq, Eq, Hash)]
+pub struct Name(pub String);
+
+#[derive(Serialize, Deserialize, Component, Debug)]
+pub struct LastRun(pub chrono::DateTime<chrono::Utc>);
 
 pub trait System: 'static + Send {
     fn name(&self) -> Cow<'static, str>;
@@ -191,17 +198,31 @@ impl Ecs {
         for system in &self.systems {
             let _span = tracing::info_span!("system", name = system.name().as_ref()).entered();
             let started = std::time::Instant::now();
+
+            let entity = self
+                .system_entity(&system.name())
+                .unwrap_or_else(|| self.new_entity().attach(Name(system.name().to_string())));
+
             debug!("Running");
+
             if let Err(e) = system.run(&self) {
                 error!(?e);
             }
+
+            entity.attach(LastRun(chrono::Utc::now()));
 
             debug!(elapsed_ms = started.elapsed().as_millis(), "Finished",);
         }
     }
 
     pub fn register<F: IntoSystem<Params>, Params: SystemParam>(&mut self, system: F) {
-        self.systems.push(Box::new(system.into_system()));
+        let system = Box::new(system.into_system());
+
+        if self.system_entity(&system.name()).is_none() {
+            self.new_entity().attach(Name(system.name().to_string()));
+        }
+
+        self.systems.push(system);
     }
 
     pub fn system<'a>(&'a self, name: &str) -> Option<&'a dyn System> {
@@ -210,12 +231,37 @@ impl Ecs {
             .find(|s| s.name() == name)
             .map(|s| s.as_ref())
     }
+
+    pub fn system_entity<'a>(&'a self, name: &str) -> Option<Entity<'a>> {
+        self.find(Name(name.to_string())).next()
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SystemEntity<'a>(pub Entity<'a>);
+
+impl<'a> AsRef<Entity<'a>> for SystemEntity<'a> {
+    fn as_ref(&self) -> &Entity<'a> {
+        &self.0
+    }
+}
+
+impl SystemParam for SystemEntity<'_> {
+    type Item<'world> = SystemEntity<'world>;
+
+    fn get_param<'world>(world: &'world Ecs, system: &str) -> Self::Item<'world> {
+        let Some(entity) = world.system_entity(system) else {
+            panic!("Couldn't find SystemEntity for {system:?}. This should not happen.");
+        };
+
+        SystemEntity(entity)
+    }
 }
 
 impl SystemParam for &'_ Ecs {
     type Item<'world> = &'world Ecs;
 
-    fn get_param<'world>(world: &'world Ecs) -> Self::Item<'world> {
+    fn get_param<'world>(world: &'world Ecs, _system: &str) -> Self::Item<'world> {
         world
     }
 }
@@ -223,14 +269,27 @@ impl SystemParam for &'_ Ecs {
 impl<F> SystemParam for query::Query<'_, F, ()> {
     type Item<'world> = query::Query<'world, F, ()>;
 
-    fn get_param<'world>(world: &'world Ecs) -> Self::Item<'world> {
+    fn get_param<'world>(world: &'world Ecs, _system: &str) -> Self::Item<'world> {
         query::Query::new(world, ())
+    }
+}
+
+impl SystemParam for LastRun {
+    type Item<'world> = LastRun;
+
+    fn get_param<'world>(world: &'world Ecs, system: &str) -> Self::Item<'world> {
+        let never = LastRun(chrono::DateTime::<chrono::Utc>::MIN_UTC);
+
+        world
+            .system_entity(system)
+            .and_then(|entity| entity.component())
+            .unwrap_or(never)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{query, Ecs};
+    use crate::{query, Ecs, SystemEntity};
 
     #[test]
     fn no_param() {
@@ -296,6 +355,28 @@ mod tests {
     fn run_ecs() {
         let mut db = Ecs::open_in_memory().unwrap();
         fn system(ecs: &Ecs) {
+            ecs.new_entity().attach(Seen);
+        }
+
+        db.register(system);
+        db.tick();
+
+        assert!(db.find(Seen).next().is_some());
+    }
+
+    #[test]
+    fn system_entity_param() {
+        let mut db = Ecs::open_in_memory().unwrap();
+        fn system(ecs: &Ecs, system: SystemEntity<'_>) {
+            assert_eq!(
+                system
+                    .as_ref()
+                    .component::<crate::system::Name>()
+                    .unwrap()
+                    .0,
+                "ecsdb::system::tests::system_entity_param::system"
+            );
+
             ecs.new_entity().attach(Seen);
         }
 
