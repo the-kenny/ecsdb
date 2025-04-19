@@ -50,9 +50,10 @@ impl Ecs {
         Self::from_rusqlite(rusqlite::Connection::open(path)?)
     }
 
-    pub fn from_rusqlite(conn: rusqlite::Connection) -> Result<Self, Error> {
+    pub fn from_rusqlite(mut conn: rusqlite::Connection) -> Result<Self, Error> {
         conn.pragma_update(None, "journal_mode", "wal")?;
         conn.execute_batch(include_str!("schema.sql"))?;
+        conn.set_transaction_behavior(::rusqlite::TransactionBehavior::Immediate);
         Ok(Self {
             conn,
             systems: Default::default(),
@@ -218,6 +219,7 @@ mod tests {
     use crate::{self as ecsdb, Ecs};
     use crate::{BelongsTo, Component};
 
+    use anyhow::anyhow;
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Serialize, Deserialize, Component)]
@@ -524,5 +526,50 @@ mod tests {
 
         e.attach(B);
         assert!(e.last_modified() > old);
+    }
+
+    #[test]
+    fn modify_component() -> Result<(), anyhow::Error> {
+        let ecs = super::Ecs::open_in_memory()?;
+
+        #[derive(Component, Debug, Default, Deserialize, Serialize, PartialEq)]
+        struct Foo(Vec<u64>);
+
+        let entity = ecs.new_entity().modify_component(|foo: &mut Foo| {
+            *foo = Foo(vec![1, 2, 3]);
+        });
+        assert_eq!(entity.component(), Some(Foo(vec![1, 2, 3])));
+
+        let entity = ecs
+            .new_entity()
+            .attach(Foo(vec![1, 2, 3]))
+            .modify_component(|foo: &mut Foo| {
+                foo.0.clear();
+            });
+
+        assert_eq!(entity.component(), Some(Foo(vec![])));
+
+        Ok(())
+    }
+
+    #[test]
+    fn try_modify_component() -> Result<(), anyhow::Error> {
+        let ecs = super::Ecs::open_in_memory()?;
+
+        #[derive(Component, Debug, Default, Deserialize, Serialize, PartialEq)]
+        struct Foo(Vec<u64>);
+
+        assert!(ecs
+            .new_entity()
+            .try_modify_component(|_foo: &mut Foo| { Err(anyhow!("error")) })
+            .is_err());
+
+        assert!(ecs
+            .new_entity()
+            .attach(Foo(vec![1, 2, 3]))
+            .try_modify_component(|_foo: &mut Foo| { Err(anyhow!("error")) })
+            .is_err());
+
+        Ok(())
     }
 }

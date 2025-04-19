@@ -131,6 +131,35 @@ impl<'a> Entity<'a> {
 }
 
 impl<'a> Entity<'a> {
+    pub fn modify_component<C: Component + Default>(&self, f: impl FnOnce(&mut C)) -> Self {
+        self.try_modify_component(|c| {
+            f(c);
+            Ok(())
+        })
+        .unwrap()
+    }
+
+    // TODO: Race Condition; needs refactoring to make Entity generic over
+    // `rusqlite::Connection` and `rusqlite::Transaction`
+    pub fn try_modify_component<C: Component + Default>(
+        &self,
+        f: impl FnOnce(&mut C) -> Result<(), anyhow::Error>,
+    ) -> Result<Self, ModifyComponentError> {
+        let mut component = self.try_component()?.unwrap_or_default();
+        f(&mut component).map_err(ModifyComponentError::Fn)?;
+        Ok(self.try_attach(component)?)
+    }
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum ModifyComponentError {
+    #[error(transparent)]
+    Ecs(#[from] Error),
+    #[error("Error in modify-fun: {0}")]
+    Fn(anyhow::Error),
+}
+
+impl<'a> Entity<'a> {
     pub fn try_matches<F: Filter>(&self) -> Result<bool, Error> {
         let q = query::Query::<F, _>::new(self.db(), self.id());
         Ok(q.try_into_iter()?.next().is_some())
@@ -307,6 +336,27 @@ impl<'a> NewEntity<'a> {
 
     pub fn parents(&'a self) -> impl Iterator<Item = Entity<'a>> + 'a {
         iter::empty()
+    }
+}
+
+impl<'a> NewEntity<'a> {
+    pub fn modify_component<C: Component + Default>(&self, f: impl FnOnce(&mut C)) -> Entity<'a> {
+        self.try_modify_component(|c| {
+            f(c);
+            Ok(())
+        })
+        .unwrap()
+    }
+
+    // TODO: Race Condition; needs refactoring to make Entity generic over
+    // `rusqlite::Connection` and `rusqlite::Transaction`
+    pub fn try_modify_component<C: Component + Default>(
+        &self,
+        f: impl FnOnce(&mut C) -> Result<(), anyhow::Error>,
+    ) -> Result<Entity<'a>, ModifyComponentError> {
+        let mut component = C::default();
+        f(&mut component).map_err(ModifyComponentError::Fn)?;
+        Ok(self.try_attach(component)?)
     }
 }
 
