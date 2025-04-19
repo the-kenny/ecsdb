@@ -1,47 +1,29 @@
-use ecsdb::Component;
+use ecsdb::{query::Without, Component, Ecs};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize, Component)]
-struct DiaryEntry;
-#[derive(Debug, Serialize, Deserialize, Component)]
-struct Contents(String);
-#[derive(Debug, Serialize, Deserialize, Component)]
-struct Date(chrono::NaiveDate);
-
 pub fn main() -> Result<(), anyhow::Error> {
-    tracing_subscriber::fmt::init();
+    #[derive(Debug, Component, Serialize, Deserialize)]
+    struct Headline(String);
 
-    let db = ecsdb::Ecs::open("basic.sqlite")?;
+    #[derive(Debug, Component, Serialize, Deserialize)]
+    struct Date(chrono::DateTime<chrono::Utc>);
 
-    let _entry = db
-        .new_entity()
-        .attach(DiaryEntry)
-        .attach(Contents("Lorem ipsum ...".into()))
-        .attach(Date(chrono::Utc::now().date_naive()));
+    let ecs = Ecs::open_in_memory()?;
+    ecs.new_entity()
+        .attach(Headline("My Note".into()))
+        .attach(Date(chrono::Utc::now()));
 
-    use ecsdb::query::*;
+    ecs.new_entity().attach(Headline("My Note".into()));
 
-    println!("Total: {} entities", db.query::<()>().count());
-
-    let _ = db.query::<(
-        DiaryEntry,
-        Contents,
-        Without<Date>,
-        Or<(DiaryEntry, Contents)>,
-    )>();
-
-    for entry in db.query::<(DiaryEntry, Contents)>() {
-        println!("DiaryEntry",);
-        println!("  id:\t{}", entry.id(),);
+    for entity in ecs.query::<(Headline, Without<Date>)>().into_iter() {
         println!(
-            "  date:\t{}",
-            entry.component::<Date>().unwrap().0.to_string(),
+            "Entity '{}' (id={}) is missing component 'Date'",
+            entity.component::<Headline>().unwrap().0,
+            entity.id()
         );
-        println!("  text:\t{}", entry.component::<Contents>().unwrap().0);
-        println!()
-    }
 
-    db.close().unwrap();
+        entity.destroy();
+    }
 
     Ok(())
 }
