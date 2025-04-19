@@ -1,7 +1,7 @@
 use std::iter;
 
 use rusqlite::params;
-use tracing::debug;
+use tracing::{debug, trace};
 
 use crate::{
     component::Bundle,
@@ -193,8 +193,12 @@ impl<'a> Entity<'a> {
         )?;
 
         for (component, data) in components {
-            stmt.execute(params![self.id(), component, data])?;
-            debug!(entity = self.id(), component, "attached");
+            let attached_rows = stmt.execute(params![self.id(), component, data])?;
+            if attached_rows > 0 {
+                debug!(entity = self.id(), component, "attached");
+            } else {
+                debug!(entity = self.id(), component, "no-op")
+            }
         }
 
         Ok(self)
@@ -208,8 +212,12 @@ impl<'a> Entity<'a> {
             .prepare("delete from components where entity = ?1 and component = ?2")?;
 
         for component in B::COMPONENTS {
-            stmt.execute(params![self.id(), component])?;
-            debug!(entity = self.id(), component, "detached");
+            let deleted_rows = stmt.execute(params![self.id(), component])?;
+            if deleted_rows > 0 {
+                debug!(entity = self.id(), component, "detached");
+            } else {
+                debug!(entity = self.id(), component, "no-op")
+            }
         }
 
         Ok(self)
