@@ -1,4 +1,4 @@
-use crate::EntityId;
+use crate::{sql::Changes, EntityId};
 
 use super::{sql::Components, Component};
 use std::{any, marker::PhantomData};
@@ -167,6 +167,7 @@ impl<C: Component> Filter for C {
 }
 
 pub struct Without<C>(PhantomData<C>);
+
 impl<C: Component> Filter for Without<C> {
     fn sql_query() -> sea_query::SelectStatement {
         use sea_query::*;
@@ -174,6 +175,60 @@ impl<C: Component> Filter for Without<C> {
             .column(Components::Entity)
             .from(Components::Table)
             .and_where(Expr::col(Components::Entity).not_in_subquery(<C as Filter>::sql_query()))
+            .take()
+    }
+}
+
+pub struct Attached<C>(PhantomData<C>);
+
+impl<C: Component> Filter for Attached<C> {
+    fn sql_query() -> sea_query::SelectStatement {
+        use sea_query::*;
+        Query::select()
+            .column(Changes::Entity)
+            .from(Changes::Table)
+            .and_where(Expr::col(Changes::Component).eq(C::component_name()))
+            .and_where(Expr::col(Changes::Change).eq("attach"))
+            .take()
+    }
+}
+
+pub struct Detached<C>(PhantomData<C>);
+
+impl<C: Component> Filter for Detached<C> {
+    fn sql_query() -> sea_query::SelectStatement {
+        use sea_query::*;
+        Query::select()
+            .column(Changes::Entity)
+            .from(Changes::Table)
+            .and_where(Expr::col(Changes::Component).eq(C::component_name()))
+            .and_where(Expr::col(Changes::Change).eq("detach"))
+            .take()
+    }
+}
+
+pub struct Created;
+
+impl Filter for Created {
+    fn sql_query() -> sea_query::SelectStatement {
+        use sea_query::*;
+        Query::select()
+            .column(Changes::Entity)
+            .from(Changes::Table)
+            .and_where(Expr::col(Changes::Change).eq("create"))
+            .take()
+    }
+}
+
+pub struct Destroyed;
+
+impl Filter for Destroyed {
+    fn sql_query() -> sea_query::SelectStatement {
+        use sea_query::*;
+        Query::select()
+            .column(Changes::Entity)
+            .from(Changes::Table)
+            .and_where(Expr::col(Changes::Change).eq("destroy"))
             .take()
     }
 }

@@ -16,7 +16,7 @@ pub mod resource;
 pub use resource::*;
 
 pub mod system;
-use ::rusqlite::params;
+use ::rusqlite::{params, OptionalExtension};
 pub use system::*;
 
 use std::path::Path;
@@ -203,6 +203,22 @@ pub enum Change {
 }
 
 impl Ecs {
+    pub fn latest_change_id(&self) -> Result<Option<i64>, Error> {
+        let seq: Option<i64> = self.conn.query_row_and_then(
+            "select max(sequence) from changes",
+            params![],
+            |row| row.get(0),
+        )?;
+
+        Ok(seq)
+    }
+
+    pub fn clear_changes_up_to(&self, up_to: i64) -> Result<(), Error> {
+        self.conn
+            .execute("delete from changes where sequence < ?1", params![up_to])?;
+        Ok(())
+    }
+
     pub fn changes(&self) -> Result<Vec<Change>, Error> {
         let mut stmt = self
             .conn
@@ -262,10 +278,32 @@ mod sql {
     impl sea_query::Iden for Components {
         fn unquoted(&self, s: &mut dyn std::fmt::Write) {
             let v = match self {
-                Components::Table => "components",
-                Components::Entity => "entity",
-                Components::Component => "component",
-                Components::Data => "data",
+                Self::Table => "components",
+                Self::Entity => "entity",
+                Self::Component => "component",
+                Self::Data => "data",
+            };
+            write!(s, "{v}").unwrap()
+        }
+    }
+
+    #[allow(unused)]
+    pub enum Changes {
+        Table,
+        Sequence,
+        Entity,
+        Component,
+        Change,
+    }
+
+    impl sea_query::Iden for Changes {
+        fn unquoted(&self, s: &mut dyn std::fmt::Write) {
+            let v = match self {
+                Self::Table => "changes",
+                Self::Sequence => "sequence",
+                Self::Entity => "entity",
+                Self::Component => "component",
+                Self::Change => "change",
             };
             write!(s, "{v}").unwrap()
         }
@@ -705,6 +743,33 @@ mod tests {
 
         ecs.clear_changes()?;
         assert!(ecs.changes()?.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn changed_system_param() -> Result<(), anyhow::Error> {
+        #[derive(Debug, Deserialize, Serialize, Component)]
+        struct Seen;
+
+        let mut ecs = super::Ecs::open_in_memory()?;
+        ecs.enable_change_tracking()?;
+
+        fn system(query: Query<Attached<B>>) {
+            assert_eq!(query.iter().map(|e| e.id()).collect::<Vec<_>>(), vec![200]);
+
+            query.iter().for_each(|e| {
+                e.attach(Seen);
+            });
+        }
+
+        ecs.register(system);
+
+        ecs.entity(100).attach(A);
+        ecs.entity(200).attach(B);
+
+        ecs.tick();
+        assert!(ecs.entity(200).has::<Seen>());
 
         Ok(())
     }

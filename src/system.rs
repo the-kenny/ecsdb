@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error};
 
-use crate::{self as ecsdb, query, Component, Ecs, Entity};
+use crate::{self as ecsdb, query, Component, Ecs, Entity, Error};
 
 use core::marker::PhantomData;
 use std::borrow::Cow;
@@ -195,6 +195,8 @@ impl SystemParam for () {
 
 impl Ecs {
     pub fn tick(&self) {
+        let latest_change = self.latest_change_id().unwrap();
+
         for system in &self.systems {
             let _span = tracing::info_span!("system", name = system.name().as_ref()).entered();
             let started = std::time::Instant::now();
@@ -207,6 +209,10 @@ impl Ecs {
 
             if let Err(e) = system.run(&self) {
                 error!(?e);
+            }
+
+            if let Some(latest_change) = latest_change {
+                self.clear_changes_up_to(latest_change).unwrap();
             }
 
             entity.attach(LastRun(chrono::Utc::now()));
