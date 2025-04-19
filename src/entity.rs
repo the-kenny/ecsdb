@@ -39,6 +39,31 @@ impl<'a> Entity<'a> {
         self.0
     }
 
+    pub fn last_modified(&self) -> chrono::DateTime<chrono::Utc> {
+        self.try_last_modified().expect("Non-Error")
+    }
+
+    #[tracing::instrument(name = "last_modified", level = "debug")]
+    pub fn try_last_modified(&self) -> Result<chrono::DateTime<chrono::Utc>, Error> {
+        self.0.try_last_modified(self.id()).map_err(Error::from)
+    }
+
+    pub fn component_names(&self) -> impl Iterator<Item = String> {
+        self.try_component_names().unwrap()
+    }
+
+    #[tracing::instrument(name = "component_names", level = "debug")]
+    pub fn try_component_names(&self) -> Result<impl Iterator<Item = String>, Error> {
+        let mut stmt = self
+            .0
+            .conn
+            .prepare("select component from components where entity = ?1")?;
+        let names = stmt
+            .query_map(params![self.id()], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(names.into_iter())
+    }
+
     pub fn has<B: Bundle>(&self) -> bool {
         self.try_has::<B>().unwrap()
     }
@@ -60,7 +85,24 @@ impl<'a> Entity<'a> {
 
         Ok(true)
     }
+}
 
+impl<'a> Entity<'a> {
+    pub fn destroy(self) {
+        self.try_destroy().unwrap();
+    }
+
+    #[tracing::instrument(name = "destroy", level = "debug")]
+    pub fn try_destroy(self) -> Result<(), Error> {
+        self.0
+            .conn
+            .execute("delete from components where entity = ?1", [self.id()])?;
+        debug!(entity = self.id(), "destroyed");
+        Ok(())
+    }
+}
+
+impl<'a> Entity<'a> {
     pub fn component<T: Component>(&self) -> Option<T> {
         self.try_component::<T>().unwrap()
     }
@@ -86,7 +128,9 @@ impl<'a> Entity<'a> {
             _other => panic!(),
         }
     }
+}
 
+impl<'a> Entity<'a> {
     pub fn try_matches<F: Filter>(&self) -> Result<bool, Error> {
         let q = query::Query::<F, _>::new(self.db(), self.id());
         Ok(q.try_into_iter()?.next().is_some())
@@ -104,18 +148,6 @@ impl<'a> Entity<'a> {
 
     pub fn detach<B: Bundle>(self) -> Self {
         self.try_detach::<B>().unwrap()
-    }
-
-    pub fn destroy(self) {
-        self.try_destroy().unwrap();
-    }
-
-    pub fn component_names(&self) -> impl Iterator<Item = String> {
-        self.try_component_names().unwrap()
-    }
-
-    pub fn last_modified(&self) -> chrono::DateTime<chrono::Utc> {
-        self.try_last_modified().expect("Non-Error")
     }
 
     #[tracing::instrument(name = "attach", level = "debug", skip_all)]
@@ -152,32 +184,6 @@ impl<'a> Entity<'a> {
         }
 
         Ok(self)
-    }
-
-    #[tracing::instrument(name = "destroy", level = "debug")]
-    pub fn try_destroy(self) -> Result<(), Error> {
-        self.0
-            .conn
-            .execute("delete from components where entity = ?1", [self.id()])?;
-        debug!(entity = self.id(), "destroyed");
-        Ok(())
-    }
-
-    #[tracing::instrument(name = "component_names", level = "debug")]
-    pub fn try_component_names(&self) -> Result<impl Iterator<Item = String>, Error> {
-        let mut stmt = self
-            .0
-            .conn
-            .prepare("select component from components where entity = ?1")?;
-        let names = stmt
-            .query_map(params![self.id()], |row| row.get(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(names.into_iter())
-    }
-
-    #[tracing::instrument(name = "last_modified", level = "debug")]
-    pub fn try_last_modified(&self) -> Result<chrono::DateTime<chrono::Utc>, Error> {
-        self.0.try_last_modified(self.id()).map_err(Error::from)
     }
 }
 
