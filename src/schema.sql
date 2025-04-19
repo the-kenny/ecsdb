@@ -20,6 +20,13 @@ where
 
 end;
 
+create table if not exists changes (
+    sequence integer primary key autoincrement,
+    entity integer not null,
+    component text,
+    change text not null
+);
+
 create table if not exists resources (
     name text not null unique,
     data blob,

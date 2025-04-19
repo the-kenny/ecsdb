@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error};
 
-use crate::{self as ecsdb, query, Component, Ecs, Entity, EntityId};
+use crate::{self as ecsdb, query, Component, Ecs, Entity};
 
 use core::marker::PhantomData;
 use std::borrow::Cow;

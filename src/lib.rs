@@ -1,5 +1,4 @@
 pub mod component;
-
 pub use component::{Component, ComponentRead, ComponentWrite};
 
 pub mod entity;
@@ -73,6 +72,20 @@ impl Ecs {
             .query_row("select data_version from pragma_data_version", [], |x| {
                 x.get("data_version")
             })?)
+    }
+}
+
+impl Ecs {
+    pub fn enable_change_tracking(&mut self) -> Result<(), Error> {
+        self.conn
+            .execute_batch(include_str!("change_tracking_enable.sql"))?;
+        Ok(())
+    }
+
+    pub fn disable_change_tracking(&mut self) -> Result<(), Error> {
+        self.conn
+            .execute_batch(include_str!("change_tracking_disable.sql"))?;
+        Ok(())
     }
 }
 
@@ -181,6 +194,52 @@ impl Ecs {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum Change {
+    Create { entity: EntityId },
+    Attach { entity: EntityId, component: String },
+    Detach { entity: EntityId, component: String },
+    Destroy { entity: EntityId },
+}
+
+impl Ecs {
+    pub fn changes(&self) -> Result<Vec<Change>, Error> {
+        let mut stmt = self
+            .conn
+            .prepare_cached("select * from changes order by sequence asc")?;
+
+        let changes = stmt
+            .query_map(params![], |row| {
+                let entity = row.get("entity")?;
+                let change: String = row.get("change")?;
+
+                match change.as_str() {
+                    "create" => Ok(Change::Create { entity }),
+                    "attach" => {
+                        let component = row.get("component")?;
+                        Ok(Change::Attach { entity, component })
+                    }
+                    "detach" => {
+                        let component = row.get("component")?;
+                        Ok(Change::Detach { entity, component })
+                    }
+                    "destroy" => Ok(Change::Destroy { entity }),
+                    other => {
+                        panic!("Invalid 'changes.change' {other:?}");
+                    }
+                }
+            })?
+            .collect::<Result<_, _>>()?;
+
+        Ok(changes)
+    }
+
+    pub fn clear_changes(&self) -> Result<(), Error> {
+        self.conn.execute("delete from changes", params![])?;
+        Ok(())
+    }
+}
+
 pub mod rusqlite {
     pub use rusqlite::*;
 }
@@ -216,7 +275,7 @@ mod sql {
 #[cfg(test)]
 mod tests {
     // #[derive(Component)] derives `impl ecsdb::Component for ...`
-    use crate::{self as ecsdb, Ecs};
+    use crate::{self as ecsdb, Change, Ecs};
     use crate::{BelongsTo, Component};
 
     use anyhow::anyhow;
@@ -569,6 +628,83 @@ mod tests {
             .attach(Foo(vec![1, 2, 3]))
             .try_modify_component(|_foo: &mut Foo| { Err(anyhow!("error")) })
             .is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn change_tracking_enable_disable() -> Result<(), anyhow::Error> {
+        let mut ecs = super::Ecs::open_in_memory()?;
+        ecs.enable_change_tracking()?;
+
+        assert_eq!(ecs.changes()?, vec![]);
+
+        ecs.new_entity().attach(A);
+        assert_eq!(ecs.changes()?.len(), 2);
+
+        ecs.disable_change_tracking()?;
+        ecs.clear_changes()?;
+
+        ecs.new_entity().attach(A);
+        assert!(ecs.changes()?.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn change_tracking() -> Result<(), anyhow::Error> {
+        let mut ecs = super::Ecs::open_in_memory()?;
+        ecs.enable_change_tracking()?;
+
+        let mut changes = vec![];
+
+        assert_eq!(ecs.changes()?, vec![]);
+
+        let entity = ecs.new_entity().attach(A);
+
+        changes.extend([
+            Change::Create {
+                entity: entity.id(),
+            },
+            Change::Attach {
+                entity: entity.id(),
+                component: <A as Component>::component_name().to_owned(),
+            },
+        ]);
+
+        assert_eq!(ecs.changes()?, changes);
+
+        entity.attach(B);
+        changes.push(Change::Attach {
+            entity: entity.id(),
+            component: <B as Component>::component_name().to_owned(),
+        });
+
+        assert_eq!(ecs.changes()?, changes);
+
+        entity.detach::<B>();
+        changes.push(Change::Detach {
+            entity: entity.id(),
+            component: <B as Component>::component_name().to_owned(),
+        });
+
+        assert_eq!(ecs.changes()?, changes);
+
+        entity.detach::<A>();
+        changes.extend([
+            Change::Detach {
+                entity: entity.id(),
+                component: <A as Component>::component_name().to_owned(),
+            },
+            Change::Destroy {
+                entity: entity.id(),
+            },
+        ]);
+
+        assert_eq!(ecs.changes()?, changes);
+
+        ecs.clear_changes()?;
+        assert!(ecs.changes()?.is_empty());
 
         Ok(())
     }

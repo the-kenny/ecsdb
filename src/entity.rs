@@ -1,7 +1,7 @@
 use std::iter;
 
 use rusqlite::params;
-use tracing::{debug, trace};
+use tracing::debug;
 
 use crate::{
     component::Bundle,
