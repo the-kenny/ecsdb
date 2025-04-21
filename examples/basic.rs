@@ -1,4 +1,4 @@
-use ecsdb::{query::Without, Component, Ecs};
+use ecsdb::{query::Without, Component, Ecs, Entity};
 use serde::{Deserialize, Serialize};
 
 pub fn main() -> Result<(), anyhow::Error> {
@@ -15,10 +15,13 @@ pub fn main() -> Result<(), anyhow::Error> {
 
     ecs.new_entity().attach(Headline("My Note".into()));
 
-    for entity in ecs.query::<(Headline, Without<Date>)>().into_iter() {
+    for (entity, headline) in ecs
+        .query_filtered::<(Entity, Headline), Without<Date>>()
+        .into_iter()
+    {
         println!(
             "Entity '{}' (id={}) is missing component 'Date'",
-            entity.component::<Headline>().unwrap().0,
+            headline.0,
             entity.id()
         );
 

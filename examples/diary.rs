@@ -1,4 +1,4 @@
-use ecsdb::Component;
+use ecsdb::{Component, Entity, EntityId};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Component)]
@@ -23,21 +23,19 @@ pub fn main() -> Result<(), anyhow::Error> {
 
     println!("Total: {} entities", db.query::<()>().count());
 
-    let _ = db.query::<(
-        DiaryEntry,
-        Contents,
+    let _ = db.query_filtered::<Entity, (
+        With<(DiaryEntry, Contents)>,
         Without<Date>,
-        Or<(DiaryEntry, Contents)>,
+        Or<(With<DiaryEntry>, With<Contents>)>,
     )>();
 
-    for entry in db.query::<(DiaryEntry, Contents)>() {
+    for (id, _, Date(date), Contents(contents)) in
+        db.query::<(EntityId, DiaryEntry, Date, Contents)>()
+    {
         println!("DiaryEntry",);
-        println!("  id:\t{}", entry.id(),);
-        println!(
-            "  date:\t{}",
-            entry.component::<Date>().unwrap().0.to_string(),
-        );
-        println!("  text:\t{}", entry.component::<Contents>().unwrap().0);
+        println!("  id:\t{}", id);
+        println!("  date:\t{date}",);
+        println!("  text:\t{contents}");
         println!()
     }
 

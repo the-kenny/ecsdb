@@ -1,5 +1,6 @@
 pub mod component;
 
+use component::Bundle;
 pub use component::{Component, ComponentRead, ComponentWrite};
 
 pub mod entity;
@@ -14,6 +15,7 @@ pub use hierarchy::*;
 pub mod query;
 
 pub mod resource;
+use query::With;
 pub use resource::*;
 
 pub mod system;
@@ -22,7 +24,6 @@ pub use system::*;
 
 use std::path::Path;
 
-use query::DataFilter;
 use tracing::{debug, instrument};
 
 pub type EntityId = i64;
@@ -87,41 +88,93 @@ impl Ecs {
 }
 
 impl Ecs {
-    pub fn query<'a, F>(&'a self) -> impl Iterator<Item = Entity<'a>> + 'a
-    where
-        F: query::Filter + 'a,
-    {
-        self.try_query::<'a, F>().unwrap()
-    }
-
-    #[instrument(name = "query", level = "debug", skip_all)]
-    pub fn try_query<'a, F>(&'a self) -> Result<impl Iterator<Item = Entity<'a>> + 'a, Error>
-    where
-        F: query::Filter + 'a,
-    {
-        debug!(query = std::any::type_name::<F>());
-        let query = query::Query::<F, ()>::new(self, ());
-        query.try_into_iter()
+    pub fn entity_with<'a, B: Bundle>(&'a self, eid: EntityId) -> Option<Entity<'a>> {
+        let e = Entity::with_id(self, eid);
+        e.has::<B>().then_some(e)
     }
 }
 
 impl Ecs {
-    pub fn find<'a, V: DataFilter>(
-        &'a self,
-        components: V,
-    ) -> impl Iterator<Item = Entity<'a>> + 'a {
-        self.try_find(components).unwrap()
+    pub fn query<'a, D>(&'a self) -> impl Iterator<Item = D::Output<'a>> + 'a
+    where
+        D: query::QueryData + 'a,
+    {
+        self.try_query::<D>().unwrap()
     }
 
-    #[instrument(name = "find", level = "debug", skip_all)]
-    pub fn try_find<'a, V: DataFilter>(
-        &'a self,
-        components: V,
-    ) -> Result<impl Iterator<Item = Entity<'a>> + 'a, Error> {
-        let query = query::Query::<(), _>::new(self, components);
-        query.try_into_iter()
+    pub fn query_filtered<'a, D, F>(&'a self) -> impl Iterator<Item = D::Output<'a>> + 'a
+    where
+        D: query::QueryData + 'a,
+        F: query::QueryFilter + 'a,
+    {
+        self.try_query_filtered::<D, F>().unwrap()
     }
+
+    // pub fn data_query<'a, D: query::QueryData + 'a, F>(
+    //     &'a self,
+    // ) -> impl Iterator<Item = D::Output<'a>> + 'a
+    // where
+    //     F: query::QueryFilter + 'a,
+    // {
+    //     self.try_data_query::<'a, D, F>().unwrap()
+    // }
+
+    #[instrument(name = "query", level = "debug", skip_all)]
+    pub fn try_query<'a, Q>(&'a self) -> Result<impl Iterator<Item = Q::Output<'a>> + 'a, Error>
+    where
+        Q: query::QueryData + 'a,
+    {
+        debug!(query = std::any::type_name::<Q>());
+        let query = query::Query::<Q>::new(self);
+        query.try_iter()
+    }
+
+    #[instrument(name = "query_filtered", level = "debug", skip_all)]
+    pub fn try_query_filtered<'a, Q, F>(
+        &'a self,
+    ) -> Result<impl Iterator<Item = Q::Output<'a>> + 'a, Error>
+    where
+        Q: query::QueryData + 'a,
+        F: query::QueryFilter + 'a,
+    {
+        debug!(
+            query = std::any::type_name::<Q>(),
+            filter = std::any::type_name::<F>()
+        );
+        let query = query::Query::<Q, F>::new(self);
+        query.try_iter()
+    }
+
+    // #[instrument(name = "data_query", level = "debug", skip_all)]
+    // pub fn try_data_query<'a, D: query::QueryData + 'a, F>(
+    //     &'a self,
+    // ) -> Result<impl Iterator<Item = D::Output<'a>> + 'a, Error>
+    // where
+    //     F: query::QueryFilter + 'a,
+    // {
+    //     debug!(query = std::any::type_name::<F>());
+    //     let query = query::Query::<F, ()>::new(self);
+    //     query.try_into_data_iter::<D>()
+    // }
 }
+
+// impl Ecs {
+//     pub fn find<'a, C: query::QueryFilterValue>(
+//         &'a self,
+//         filter: C,
+//     ) -> impl Iterator<Item = Entity<'a>> + 'a {
+//         self.try_find::<C>(filter).unwrap()
+//     }
+
+//     #[instrument(name = "find", level = "debug", skip_all)]
+//     pub fn try_find<'a, C: query::QueryFilterValue>(
+//         &'a self,
+//         filter: C,
+//     ) -> Result<impl Iterator<Item = Entity<'a>> + 'a, Error> {
+//         let query = query::Query::<Entity, (), C>::new(self, filter);
+//         query.try_iter()
+//     }
+// }
 
 impl Ecs {
     /// Returns the highest `last_modified` from all components of `entity`.
@@ -157,10 +210,10 @@ impl Ecs {
 
 impl Ecs {
     #[instrument(name = "fetch", level = "debug", skip_all)]
-    fn fetch<'a>(
+    fn fetch<'a, Q: query::QueryData + 'a>(
         &'a self,
         sql_query: sea_query::SelectStatement,
-    ) -> Result<impl Iterator<Item = Entity<'a>> + 'a, Error> {
+    ) -> Result<impl Iterator<Item = Q::Output<'a>> + 'a, Error> {
         // let sql = query.sql_query().to_string(sea_query::SqliteQueryBuilder);
         let sql = sql_query.to_string(sea_query::SqliteQueryBuilder);
         debug!(sql);
@@ -177,7 +230,8 @@ impl Ecs {
 
         Ok(rows
             .into_iter()
-            .scan(self, |ecs, eid| Some(Entity::with_id(&ecs, eid))))
+            .scan(self, |ecs, eid| Some(Entity::with_id(&ecs, eid)))
+            .map(|e| Q::from_entity(e).unwrap())) // TODO: unwrap()
     }
 }
 
@@ -213,11 +267,16 @@ mod sql {
     }
 }
 
+#[doc = include_str!("../README.md")]
+#[cfg(doctest)]
+pub struct ReadmeDoctests;
+
 #[cfg(test)]
 mod tests {
+
     // #[derive(Component)] derives `impl ecsdb::Component for ...`
-    use crate::{self as ecsdb, Ecs};
-    use crate::{BelongsTo, Component};
+    use crate::Component;
+    use crate::{self as ecsdb, Ecs, Entity, EntityId};
 
     use anyhow::anyhow;
     use serde::{Deserialize, Serialize};
@@ -294,32 +353,35 @@ mod tests {
     fn queries() {
         let db = super::Ecs::open_in_memory().unwrap();
         let _ = db.query::<MarkerComponent>();
-        let _ = db.query::<Without<(MarkerComponent, MarkerComponent)>>();
-        let _ = db.query::<(
-            MarkerComponent,
-            Or<(
-                Without<(MarkerComponent, MarkerComponent)>,
-                (MarkerComponent, MarkerComponent),
-                Or<(MarkerComponent, Without<MarkerComponent>)>,
-            )>,
-        )>();
-        let _ = db.query::<(
-            MarkerComponent,
-            ComponentWithData,
-            Without<(MarkerComponent, MarkerComponent)>,
-        )>();
-        let _ = db.query::<(MarkerComponent, Without<ComponentWithData>)>();
-        let _ = db.query::<(MarkerComponent, Without<ComponentWithData>)>();
-        let _ = db.query::<(
-            MarkerComponent,
-            MarkerComponent,
-            MarkerComponent,
-            MarkerComponent,
-            MarkerComponent,
-            MarkerComponent,
-            MarkerComponent,
-            MarkerComponent,
-        )>();
+        let _ = db.query::<Entity>();
+        let _ = db.query::<(Entity, MarkerComponent)>();
+        let _ = db.query_filtered::<Entity, With<MarkerComponent>>();
+        let _ = db.query_filtered::<Entity, Without<MarkerComponent>>();
+        // let _ = db.query::<(
+        //     MarkerComponent,
+        //     Or<(
+        //         Without<(MarkerComponent, MarkerComponent)>,
+        //         (MarkerComponent, MarkerComponent),
+        //         Or<(MarkerComponent, Without<MarkerComponent>)>,
+        //     )>,
+        // )>();
+        // let _ = db.query::<(
+        //     MarkerComponent,
+        //     ComponentWithData,
+        //     Without<(MarkerComponent, MarkerComponent)>,
+        // )>();
+        // let _ = db.query::<(MarkerComponent, Without<ComponentWithData>)>();
+        // let _ = db.query::<(MarkerComponent, Without<ComponentWithData>)>();
+        // let _ = db.query::<(
+        //     MarkerComponent,
+        //     MarkerComponent,
+        //     MarkerComponent,
+        //     MarkerComponent,
+        //     MarkerComponent,
+        //     MarkerComponent,
+        //     MarkerComponent,
+        //     MarkerComponent,
+        // )>();
     }
 
     #[test]
@@ -335,21 +397,24 @@ mod tests {
         assert_eq!(db.query::<()>().count(), 2);
         assert_eq!(db.query::<MarkerComponent>().count(), 1);
         assert_eq!(db.query::<MarkerComponent>().count(), 1);
-        assert_eq!(db.query::<Without<MarkerComponent>>().count(), 1);
+        assert_eq!(
+            db.query_filtered::<EntityId, Without<MarkerComponent>>()
+                .count(),
+            1
+        );
         assert_eq!(
             db.query::<(MarkerComponent, ComponentWithData)>().count(),
             1
         );
         assert_eq!(
-            db.query::<(MarkerComponent, Without<MarkerComponent>)>()
+            db.query_filtered::<MarkerComponent, Without<MarkerComponent>>()
                 .count(),
             0
         );
         assert_eq!(
-            db.query::<(
-                MarkerComponent,
+            db.query_filtered::<MarkerComponent, (
                 Without<MarkerComponent>,
-                Or<(MarkerComponent, ComponentWithData)>
+                Or<(With<MarkerComponent>, With<ComponentWithData>)>
             )>()
             .count(),
             0
@@ -365,67 +430,69 @@ mod tests {
         let c = db.new_entity().attach(C).id();
 
         assert_eq!(
-            db.query::<Or<(A, B, C)>>()
-                .map(|e| e.id())
+            db.query_filtered::<EntityId, Or<(With<A>, With<B>, With<C>)>>()
                 .collect::<Vec<_>>(),
             vec![a, b, c]
         );
         assert_eq!(
-            db.query::<Or<(A, B)>>().map(|e| e.id()).collect::<Vec<_>>(),
+            db.query_filtered::<EntityId, Or<(With<A>, With<B>)>>()
+                .collect::<Vec<_>>(),
             vec![a, b]
         );
         assert_eq!(
-            db.query::<Or<(A,)>>().map(|e| e.id()).collect::<Vec<_>>(),
+            db.query_filtered::<EntityId, Or<(With<A>,)>>()
+                .collect::<Vec<_>>(),
             vec![a]
         );
         assert_eq!(
-            db.query::<Or<(B,)>>().map(|e| e.id()).collect::<Vec<_>>(),
+            db.query_filtered::<EntityId, Or<(With<B>,)>>()
+                .collect::<Vec<_>>(),
             vec![b]
         );
     }
 
-    #[test]
-    fn find() {
-        let db = Ecs::open_in_memory().unwrap();
-        let eid = db.new_entity().attach(ComponentWithData(123)).id();
-        let _ = db.new_entity().attach(ComponentWithData(123));
-        let _ = db.new_entity().attach(ComponentWithData(255));
+    // #[test]
+    // fn find() {
+    //     let db = Ecs::open_in_memory().unwrap();
+    //     let eid = db.new_entity().attach(ComponentWithData(123)).id();
+    //     let _ = db.new_entity().attach(ComponentWithData(123));
+    //     let _ = db.new_entity().attach(ComponentWithData(255));
 
-        assert_eq!(db.find(eid).count(), 1);
-        assert_eq!(db.find(eid).next().unwrap().id(), eid);
-        assert_eq!(db.find((eid, MarkerComponent)).count(), 0);
-        assert_eq!(db.find(MarkerComponent).count(), 0);
-        assert_eq!(db.find(ComponentWithData(0)).count(), 0);
-        assert_eq!(db.find(ComponentWithData(123)).count(), 2);
-        assert_eq!(db.find(ComponentWithData(255)).count(), 1);
+    //     assert_eq!(db.find(eid).count(), 1);
+    //     assert_eq!(db.find(eid).next().unwrap().id(), eid);
+    //     assert_eq!(db.find((eid, MarkerComponent)).count(), 0);
+    //     assert_eq!(db.find(MarkerComponent).count(), 0);
+    //     assert_eq!(db.find(ComponentWithData(0)).count(), 0);
+    //     assert_eq!(db.find(ComponentWithData(123)).count(), 2);
+    //     assert_eq!(db.find(ComponentWithData(255)).count(), 1);
 
-        let _ = db
-            .new_entity()
-            .attach(MarkerComponent)
-            .attach(ComponentWithData(12345));
-        assert_eq!(
-            db.find((MarkerComponent, ComponentWithData(12345))).count(),
-            1
-        );
-    }
+    //     let _ = db
+    //         .new_entity()
+    //         .attach(MarkerComponent)
+    //         .attach(ComponentWithData(12345));
+    //     assert_eq!(
+    //         db.find((MarkerComponent, ComponentWithData(12345))).count(),
+    //         1
+    //     );
+    // }
 
-    #[test]
-    fn parent() {
-        let db = Ecs::open_in_memory().unwrap();
+    // #[test]
+    // fn parent() {
+    //     let db = Ecs::open_in_memory().unwrap();
 
-        let parent = db.new_entity().attach(A);
-        let child1 = db.new_entity().attach(A).attach(BelongsTo(parent.id()));
-        let child2 = db.new_entity().attach(A).attach(BelongsTo(child1.id()));
+    //     let parent = db.new_entity().attach(A);
+    //     let child1 = db.new_entity().attach(A).attach(BelongsTo(parent.id()));
+    //     let child2 = db.new_entity().attach(A).attach(BelongsTo(child1.id()));
 
-        assert!(parent.parent().is_none());
-        assert_eq!(child1.parent().map(|e| e.id()), Some(parent.id()));
-        assert_eq!(child2.parent().map(|e| e.id()), Some(child1.id()));
+    //     assert!(parent.parent().is_none());
+    //     assert_eq!(child1.parent().map(|e| e.id()), Some(parent.id()));
+    //     assert_eq!(child2.parent().map(|e| e.id()), Some(child1.id()));
 
-        assert_eq!(
-            child2.parents().map(|e| e.id()).collect::<Vec<_>>(),
-            vec![child1.id(), parent.id()]
-        );
-    }
+    //     assert_eq!(
+    //         child2.parents().map(|e| e.id()).collect::<Vec<_>>(),
+    //         vec![child1.id(), parent.id()]
+    //     );
+    // }
 
     #[test]
     fn enum_component() {
@@ -452,7 +519,6 @@ mod tests {
         let entity = db.new_entity().attach(x.clone());
 
         assert_eq!(entity.component::<X>().unwrap(), x.clone());
-        assert_eq!(db.find(x.clone()).next().unwrap().id(), entity.id());
     }
 
     #[test]
@@ -488,25 +554,25 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn entity_matches() {
-        #[derive(Serialize, Deserialize, Component)]
-        struct A;
-        #[derive(Serialize, Deserialize, Component)]
-        struct B;
+    // #[test]
+    // fn entity_matches() {
+    //     #[derive(Serialize, Deserialize, Component)]
+    //     struct A;
+    //     #[derive(Serialize, Deserialize, Component)]
+    //     struct B;
 
-        let db = super::Ecs::open_in_memory().unwrap();
-        let e = db.new_entity().attach(A);
-        let e2 = db.new_entity().attach((A, B));
+    //     let db = super::Ecs::open_in_memory().unwrap();
+    //     let e = db.new_entity().attach(A);
+    //     let e2 = db.new_entity().attach((A, B));
 
-        assert!(e.matches::<A>());
-        assert!(!e.matches::<B>());
-        assert!(!e.matches::<(A, B)>());
+    //     assert!(e.matches::<With<A>>());
+    //     assert!(!e.matches::<With<B>>());
+    //     assert!(!e.matches::<With<(A, B)>>());
 
-        assert!(e2.matches::<A>());
-        assert!(e2.matches::<B>());
-        assert!(e2.matches::<(A, B)>());
-    }
+    //     assert!(e2.matches::<With<A>>());
+    //     assert!(e2.matches::<With<B>>());
+    //     assert!(e2.matches::<With<(A, B)>>());
+    // }
 
     #[test]
     fn last_modified() {

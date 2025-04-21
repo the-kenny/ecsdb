@@ -128,6 +128,14 @@ pub trait Bundle {
     fn to_rusqlite(self) -> Result<Vec<(&'static str, rusqlite::types::Value)>, StorageError>;
 }
 
+impl Bundle for () {
+    const COMPONENTS: &'static [&'static str] = &[];
+
+    fn to_rusqlite(self) -> Result<Vec<(&'static str, rusqlite::types::Value)>, StorageError> {
+        Ok(vec![])
+    }
+}
+
 impl<C: Component> Bundle for C {
     const COMPONENTS: &'static [&'static str] = &[C::NAME];
 

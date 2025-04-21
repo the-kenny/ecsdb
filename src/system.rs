@@ -4,7 +4,10 @@ use tracing::{debug, error};
 use crate::{self as ecsdb, query, Component, Ecs, Entity, EntityId};
 
 use core::marker::PhantomData;
-use std::borrow::Cow;
+use std::{
+    borrow::Cow,
+    collections::{HashMap, HashSet},
+};
 
 #[derive(Serialize, Deserialize, Component, Debug, PartialEq, Eq, Hash)]
 pub struct Name(pub String);
@@ -195,13 +198,15 @@ impl SystemParam for () {
 
 impl Ecs {
     pub fn tick(&self) {
+        let mut system_entities: HashMap<_, _> = self.system_entities().collect();
+
         for system in &self.systems {
             let _span = tracing::info_span!("system", name = system.name().as_ref()).entered();
             let started = std::time::Instant::now();
 
-            let entity = self
-                .system_entity(&system.name())
-                .unwrap_or_else(|| self.new_entity().attach(Name(system.name().to_string())));
+            let entity = system_entities
+                .entry(system.name().into_owned())
+                .or_insert_with(|| self.new_entity().attach(Name(system.name().to_string())));
 
             debug!("Running");
 
@@ -218,10 +223,6 @@ impl Ecs {
     pub fn register<F: IntoSystem<Params>, Params: SystemParam>(&mut self, system: F) {
         let system = Box::new(system.into_system());
 
-        if self.system_entity(&system.name()).is_none() {
-            self.new_entity().attach(Name(system.name().to_string()));
-        }
-
         self.systems.push(system);
     }
 
@@ -232,8 +233,13 @@ impl Ecs {
             .map(|s| s.as_ref())
     }
 
+    pub fn system_entities<'a>(&'a self) -> impl Iterator<Item = (String, Entity<'a>)> {
+        self.query::<(Entity, Name)>().map(|(e, name)| (name.0, e))
+    }
+
     pub fn system_entity<'a>(&'a self, name: &str) -> Option<Entity<'a>> {
-        self.find(Name(name.to_string())).next()
+        self.query::<(Entity, Name)>()
+            .find_map(|(e, s)| (s.0 == name).then_some(e))
     }
 }
 
@@ -266,11 +272,11 @@ impl SystemParam for &'_ Ecs {
     }
 }
 
-impl<F> SystemParam for query::Query<'_, F, ()> {
-    type Item<'world> = query::Query<'world, F, ()>;
+impl<D, F> SystemParam for query::Query<'_, D, F> {
+    type Item<'world> = query::Query<'world, D, F>;
 
     fn get_param<'world>(world: &'world Ecs, _system: &str) -> Self::Item<'world> {
-        query::Query::new(world, ())
+        query::Query::new(world)
     }
 }
 
@@ -289,7 +295,8 @@ impl SystemParam for LastRun {
 
 #[cfg(test)]
 mod tests {
-    use crate::{query, Ecs, SystemEntity};
+    use crate::query::With;
+    use crate::{query, Ecs, Entity, SystemEntity};
 
     #[test]
     fn no_param() {
@@ -335,7 +342,7 @@ mod tests {
     #[test]
     fn run_query() {
         let mut db = Ecs::open_in_memory().unwrap();
-        fn system(query: query::Query<(A, B)>) {
+        fn system(query: query::Query<Entity, With<(A, B)>>) {
             for entity in query.try_iter().unwrap() {
                 entity.attach(Seen);
             }
@@ -361,7 +368,7 @@ mod tests {
         db.register(system);
         db.tick();
 
-        assert!(db.find(Seen).next().is_some());
+        assert!(db.query::<Seen>().next().is_some());
     }
 
     #[test]
@@ -383,6 +390,6 @@ mod tests {
         db.register(system);
         db.tick();
 
-        assert!(db.find(Seen).next().is_some());
+        assert!(db.query::<Seen>().next().is_some());
     }
 }

@@ -1,12 +1,12 @@
 use std::iter;
 
 use rusqlite::params;
-use tracing::{debug, trace};
+use tracing::debug;
 
 use crate::{
     component::Bundle,
-    query::{self, Filter},
-    BelongsTo, Component, Ecs, EntityId, Error,
+    query::{self, QueryFilter},
+    Component, Ecs, EntityId, Error,
 };
 
 #[derive(Debug, Copy, Clone)]
@@ -159,16 +159,16 @@ pub enum ModifyComponentError {
     Fn(anyhow::Error),
 }
 
-impl<'a> Entity<'a> {
-    pub fn try_matches<F: Filter>(&self) -> Result<bool, Error> {
-        let q = query::Query::<F, _>::new(self.db(), self.id());
-        Ok(q.try_into_iter()?.next().is_some())
-    }
+// impl<'a> Entity<'a> {
+//     pub fn try_matches<F: QueryFilter>(&self) -> Result<bool, Error> {
+//         let q = query::Query::<EntityId, (), EntityId>::new(self.db());
+//         Ok(q.try_iter()?.next().is_some())
+//     }
 
-    pub fn matches<F: Filter>(&self) -> bool {
-        self.try_matches::<F>().unwrap()
-    }
-}
+//     pub fn matches<F: QueryFilter>(&self) -> bool {
+//         self.try_matches::<F>().unwrap()
+//     }
+// }
 
 impl<'a> Entity<'a> {
     pub fn attach<B: Bundle>(self, component: B) -> Self {
@@ -295,38 +295,38 @@ impl<'a> NewEntity<'a> {
 }
 
 impl<'a> Entity<'a> {
-    pub fn direct_children(&'a self) -> impl Iterator<Item = Entity<'a>> {
-        self.db().direct_children(self.id())
-    }
+    // pub fn direct_children(&'a self) -> impl Iterator<Item = Entity<'a>> {
+    //     self.db().direct_children(self.id())
+    // }
 
-    pub fn all_children(&'a self) -> impl Iterator<Item = Entity<'a>> + 'a {
-        self.db().all_children(self.id())
-    }
+    // pub fn all_children(&'a self) -> impl Iterator<Item = Entity<'a>> + 'a {
+    //     self.db().all_children(self.id())
+    // }
 
-    pub fn parent(&'a self) -> Option<Entity<'a>> {
-        self.component::<BelongsTo>()
-            .map(|BelongsTo(parent)| self.db().entity(parent))
-    }
+    // pub fn parent(&'a self) -> Option<Entity<'a>> {
+    //     self.component::<BelongsTo>()
+    //         .map(|BelongsTo(parent)| self.db().entity(parent))
+    // }
 
-    pub fn parents(&'a self) -> impl Iterator<Item = Entity<'a>> + 'a {
-        let parent = self
-            .component::<BelongsTo>()
-            .map(|BelongsTo(parent)| self.db().entity(parent));
+    // pub fn parents(&'a self) -> impl Iterator<Item = Entity<'a>> + 'a {
+    //     let parent = self
+    //         .component::<BelongsTo>()
+    //         .map(|BelongsTo(parent)| self.db().entity(parent));
 
-        iter::successors(parent, |x| {
-            // For some reasons the lifetimes don't work out when we just call
-            // `x.parent()` here
-            x.component::<BelongsTo>()
-                .map(|BelongsTo(parent)| self.db().entity(parent))
-        })
-    }
+    //     iter::successors(parent, |x| {
+    //         // For some reasons the lifetimes don't work out when we just call
+    //         // `x.parent()` here
+    //         x.component::<BelongsTo>()
+    //             .map(|BelongsTo(parent)| self.db().entity(parent))
+    //     })
+    // }
 
-    #[tracing::instrument(level = "debug")]
-    pub fn destroy_recursive(&'a self) {
-        for entity in iter::once(*self).chain(self.all_children()) {
-            entity.destroy()
-        }
-    }
+    // #[tracing::instrument(level = "debug")]
+    // pub fn destroy_recursive(&'a self) {
+    //     for entity in iter::once(*self).chain(self.all_children()) {
+    //         entity.destroy()
+    //     }
+    // }
 }
 
 impl<'a> NewEntity<'a> {
