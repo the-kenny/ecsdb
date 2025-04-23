@@ -81,7 +81,8 @@ Systems are functions operating on an `Ecs`. They can be registerd via
 parameters to access data in the `Ecs`:
 
 ```rust,ignore
-// This system will attach `State::New` to all entities that have a `Marker` but no `State` component
+// This system will attach `State::New` to all entities that have a `Marker` but
+// no `State` component
 fn process_marked_system(marked_entities: Query<Entity, (With<Marker>, Without<State>)>) {
     for entity in marked_entities.iter() {
         entity
@@ -92,8 +93,8 @@ fn process_marked_system(marked_entities: Query<Entity, (With<Marker>, Without<S
 
 // This system logs all entities that have both `Date` and `Marker` but no
 // `State`
-fn log_system(entities: Query<(EntityId, Date), (With<Date>, Without<State>)>) {
-    for (entity_id, Date(date)) in entities.iter() {
+fn log_system(entities: Query<(EntityId, Date, Marker), Without<State>>) {
+    for (entity_id, Date(date), _marker) in entities.iter() {
         println("{entity_id} {date}");
     }
 }
