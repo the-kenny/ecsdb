@@ -110,15 +110,6 @@ impl Ecs {
         self.try_query_filtered::<D, F>().unwrap()
     }
 
-    // pub fn data_query<'a, D: query::QueryData + 'a, F>(
-    //     &'a self,
-    // ) -> impl Iterator<Item = D::Output<'a>> + 'a
-    // where
-    //     F: query::QueryFilter + 'a,
-    // {
-    //     self.try_data_query::<'a, D, F>().unwrap()
-    // }
-
     #[instrument(name = "query", level = "debug", skip_all)]
     pub fn try_query<'a, Q>(&'a self) -> Result<impl Iterator<Item = Q::Output<'a>> + 'a, Error>
     where
@@ -144,24 +135,11 @@ impl Ecs {
         let query = query::Query::<Q, F>::new(self, Default::default());
         query.try_iter()
     }
-
-    // #[instrument(name = "data_query", level = "debug", skip_all)]
-    // pub fn try_data_query<'a, D: query::QueryData + 'a, F>(
-    //     &'a self,
-    // ) -> Result<impl Iterator<Item = D::Output<'a>> + 'a, Error>
-    // where
-    //     F: query::QueryFilter + 'a,
-    // {
-    //     debug!(query = std::any::type_name::<F>());
-    //     let query = query::Query::<F, ()>::new(self);
-    //     query.try_into_data_iter::<D>()
-    // }
 }
 
 impl Ecs {
     pub fn find<'a, F>(&'a self, filter: F) -> impl Iterator<Item = Entity<'a>> + 'a
     where
-        // F: Into<query::FilterValue<F>>,
         F: query::FilterValue,
     {
         self.try_find::<F>(filter).unwrap()
@@ -173,7 +151,6 @@ impl Ecs {
         filter: F,
     ) -> Result<impl Iterator<Item = Entity<'a>> + 'a, Error>
     where
-        // F: Into<query::FilterValue<F>>,
         F: query::FilterValue,
     {
         let query = query::Query::<Entity, _>::new(self, query::FilterValueWrapper(filter));
@@ -217,16 +194,21 @@ impl Ecs {
     #[instrument(name = "fetch", level = "debug", skip_all)]
     fn fetch<'a, Q: query::QueryData + 'a>(
         &'a self,
-        sql_query: sea_query::SelectStatement,
+        sql_query: query::ir::Query,
     ) -> Result<impl Iterator<Item = Q::Output<'a>> + 'a, Error> {
         // let sql = query.sql_query().to_string(sea_query::SqliteQueryBuilder);
-        let sql = sql_query.to_string(sea_query::SqliteQueryBuilder);
+        let (sql, placeholders) = sql_query.into_sql();
         debug!(sql);
 
         let rows = {
             let mut stmt = self.conn.prepare(&sql)?;
+            let params: Box<[(&str, &dyn rusqlite::ToSql)]> = placeholders
+                .iter()
+                .map(|(p, v)| (p.as_str(), v.as_ref()))
+                .collect();
+
             let rows = stmt
-                .query_map([], |row| row.get::<_, EntityId>("entity"))?
+                .query_map(&params[..], |row| row.get::<_, EntityId>("entity"))?
                 .map(|r| r.expect("Valid EntityId"));
             rows.collect::<Vec<_>>()
         };
@@ -250,35 +232,12 @@ impl Ecs {
     }
 }
 
-mod sql {
-    #[allow(unused)]
-    pub enum Components {
-        Table,
-        Entity,
-        Component,
-        Data,
-    }
-
-    impl sea_query::Iden for Components {
-        fn unquoted(&self, s: &mut dyn std::fmt::Write) {
-            let v = match self {
-                Components::Table => "components",
-                Components::Entity => "entity",
-                Components::Component => "component",
-                Components::Data => "data",
-            };
-            write!(s, "{v}").unwrap()
-        }
-    }
-}
-
 #[doc = include_str!("../README.md")]
 #[cfg(doctest)]
 pub struct ReadmeDoctests;
 
 #[cfg(test)]
 mod tests {
-
     // #[derive(Component)] derives `impl ecsdb::Component for ...`
     use crate::Component;
     use crate::{self as ecsdb, Ecs, Entity, EntityId};
@@ -454,8 +413,6 @@ mod tests {
 
     #[test]
     fn query_any_of() {
-        tracing_subscriber::fmt::init();
-
         let db = Ecs::open_in_memory().unwrap();
         let a = db.new_entity().attach(A).id();
         let b = db.new_entity().attach(B).id();

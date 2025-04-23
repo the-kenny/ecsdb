@@ -1,0 +1,13 @@
+---
+source: src/query/ir.rs
+description: "WithComponent(\"ecsdb::Test\").where_clause()"
+---
+SqlFragment<ecsdb::query::ir::Where> {
+    sql: "entity in (select entity from components where component = ?1)",
+    placeholders: [
+        (
+            "?1",
+            <dyn ToSql>,
+        ),
+    ],
+}

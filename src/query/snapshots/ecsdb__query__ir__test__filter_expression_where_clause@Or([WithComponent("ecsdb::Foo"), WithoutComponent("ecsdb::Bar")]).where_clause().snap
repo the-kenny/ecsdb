@@ -1,0 +1,17 @@
+---
+source: src/query/ir.rs
+description: "Or([WithComponent(\"ecsdb::Foo\"), WithoutComponent(\"ecsdb::Bar\")]).where_clause()"
+---
+SqlFragment<ecsdb::query::ir::Where> {
+    sql: "(entity in (select entity from components where component = :1) or entity not in (select entity from components where component = :2))",
+    placeholders: [
+        (
+            ":1",
+            <dyn ToSql>,
+        ),
+        (
+            ":2",
+            <dyn ToSql>,
+        ),
+    ],
+}

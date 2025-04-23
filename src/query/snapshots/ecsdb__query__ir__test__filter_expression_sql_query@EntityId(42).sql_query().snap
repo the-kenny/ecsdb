@@ -1,0 +1,13 @@
+---
+source: src/query/ir.rs
+description: EntityId(42).sql_query()
+---
+SqlFragment<ecsdb::query::ir::Select> {
+    sql: "select distinct entity from components where entity = ?1",
+    placeholders: [
+        (
+            "?1",
+            <dyn ToSql>,
+        ),
+    ],
+}
