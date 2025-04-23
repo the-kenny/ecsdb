@@ -22,7 +22,7 @@ pub use system::*;
 
 mod tuple_macros;
 
-use std::{marker::PhantomData, path::Path};
+use std::path::Path;
 
 use tracing::{debug, instrument};
 
