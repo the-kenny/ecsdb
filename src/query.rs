@@ -13,6 +13,7 @@ pub trait QueryFilter {
     fn sql_query(&self) -> sea_query::SelectStatement;
 }
 
+pub struct AnyOf<C>(PhantomData<C>);
 pub struct With<C>(PhantomData<C>);
 pub struct Without<C>(PhantomData<C>);
 pub struct Or<F>(F);
@@ -170,6 +171,12 @@ impl QueryFilter for () {
     }
 }
 
+impl<C: Bundle> Default for AnyOf<C> {
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
+
 impl<C: Bundle> Default for With<C> {
     fn default() -> Self {
         Self(PhantomData)
@@ -191,6 +198,20 @@ impl<F: QueryFilter + Default> Default for Or<F> {
 impl<C: Component> QueryFilter for C {
     fn sql_query(&self) -> sea_query::SelectStatement {
         <C as QueryData>::sql_query()
+    }
+}
+
+impl<C: Bundle> QueryFilter for AnyOf<C> {
+    fn sql_query(&self) -> sea_query::SelectStatement {
+        use sea_query::*;
+        Query::select()
+            .column(Components::Entity)
+            .from(Components::Table)
+            .and_where(
+                Expr::col(Components::Component)
+                    .is_in(C::component_names().into_iter().map(|s| s.to_owned())),
+            )
+            .take()
     }
 }
 

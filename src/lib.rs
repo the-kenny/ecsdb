@@ -453,6 +453,34 @@ mod tests {
     }
 
     #[test]
+    fn query_any_of() {
+        tracing_subscriber::fmt::init();
+
+        let db = Ecs::open_in_memory().unwrap();
+        let a = db.new_entity().attach(A).id();
+        let b = db.new_entity().attach(B).id();
+        let c = db.new_entity().attach(C).id();
+
+        assert_eq!(
+            db.query_filtered::<EntityId, AnyOf<(A, B)>>()
+                .collect::<Vec<_>>(),
+            vec![a, b]
+        );
+
+        assert_eq!(
+            db.query_filtered::<EntityId, AnyOf<(A, C)>>()
+                .collect::<Vec<_>>(),
+            vec![a, c]
+        );
+
+        assert_eq!(
+            db.query_filtered::<EntityId, AnyOf<(A,)>>()
+                .collect::<Vec<_>>(),
+            vec![a]
+        );
+    }
+
+    #[test]
     fn find() {
         let db = Ecs::open_in_memory().unwrap();
         let eid = db.new_entity().attach(ComponentWithData(123)).id();
