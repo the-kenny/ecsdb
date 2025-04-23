@@ -14,11 +14,11 @@ pub trait Component: Sized + Any + ComponentRead<Self> + ComponentWrite<Self> {
 }
 
 pub trait ComponentWrite<C> {
-    fn to_rusqlite(component: C) -> Result<rusqlite::types::Value, StorageError>;
+    fn to_rusqlite<'a>(component: &'a C) -> Result<rusqlite::types::ToSqlOutput<'a>, StorageError>;
 }
 
 pub trait ComponentRead<C> {
-    fn from_rusqlite(value: rusqlite::types::Value) -> Result<C, StorageError>;
+    fn from_rusqlite(value: &rusqlite::types::ToSqlOutput<'_>) -> Result<C, StorageError>;
 }
 
 impl<C, S> ComponentRead<Self> for C
@@ -26,7 +26,7 @@ where
     C: Component<Storage = S>,
     S: ComponentRead<C>,
 {
-    fn from_rusqlite(value: rusqlite::types::Value) -> Result<Self, StorageError> {
+    fn from_rusqlite(value: &rusqlite::types::ToSqlOutput<'_>) -> Result<Self, StorageError> {
         S::from_rusqlite(value)
     }
 }
@@ -36,8 +36,10 @@ where
     C: Component<Storage = S>,
     S: ComponentWrite<C>,
 {
-    fn to_rusqlite(component: Self) -> Result<rusqlite::types::Value, StorageError> {
-        S::to_rusqlite(component)
+    fn to_rusqlite<'a>(
+        component: &'a Self,
+    ) -> Result<rusqlite::types::ToSqlOutput<'a>, StorageError> {
+        S::to_rusqlite(&component)
     }
 }
 
@@ -51,13 +53,16 @@ impl<C> ComponentRead<C> for JsonStorage
 where
     C: Component + DeserializeOwned,
 {
-    fn from_rusqlite(value: rusqlite::types::Value) -> Result<C, StorageError> {
-        match value {
-            rusqlite::types::Value::Text(s) => {
-                serde_json::from_str(&s).map_err(|e| StorageError(e.to_string()))
+    fn from_rusqlite(value: &rusqlite::types::ToSqlOutput<'_>) -> Result<C, StorageError> {
+        let s = match value {
+            rusqlite::types::ToSqlOutput::Borrowed(rusqlite::types::ValueRef::Text(s)) => s,
+            rusqlite::types::ToSqlOutput::Owned(rusqlite::types::Value::Text(ref s)) => {
+                s.as_bytes()
             }
-            other => Err(StorageError(format!("Unexpected type {other:?}"))),
-        }
+            other => return Err(StorageError(format!("Unexpected type {other:?}"))),
+        };
+
+        serde_json::from_slice(s).map_err(|e| StorageError(e.to_string()))
     }
 }
 
@@ -65,9 +70,11 @@ impl<C> ComponentWrite<C> for JsonStorage
 where
     C: Component + Serialize,
 {
-    fn to_rusqlite(component: C) -> Result<rusqlite::types::Value, StorageError> {
+    fn to_rusqlite<'a>(component: &'a C) -> Result<rusqlite::types::ToSqlOutput<'a>, StorageError> {
         let json = serde_json::to_string(&component).map_err(|e| StorageError(e.to_string()))?;
-        Ok(rusqlite::types::Value::Text(json))
+        Ok(rusqlite::types::ToSqlOutput::Owned(
+            rusqlite::types::Value::Text(json),
+        ))
     }
 }
 
@@ -77,22 +84,38 @@ impl<C> ComponentRead<C> for BlobStorage
 where
     C: Component + From<Vec<u8>>,
 {
-    fn from_rusqlite(value: rusqlite::types::Value) -> Result<C, StorageError> {
-        match value {
-            rusqlite::types::Value::Blob(b) => Ok(C::from(b)),
-            other => Err(StorageError(format!("Unexpected type {other:?}"))),
-        }
+    fn from_rusqlite(value: &rusqlite::types::ToSqlOutput<'_>) -> Result<C, StorageError> {
+        let b = match value {
+            rusqlite::types::ToSqlOutput::Borrowed(rusqlite::types::ValueRef::Blob(b)) => *b,
+            rusqlite::types::ToSqlOutput::Owned(rusqlite::types::Value::Blob(b)) => b,
+            other => return Err(StorageError(format!("Unexpected type {other:?}"))),
+        };
+
+        Ok(C::from(b.to_vec()))
     }
 }
 
 impl<C> ComponentWrite<C> for BlobStorage
 where
-    C: Component + Into<Vec<u8>>,
+    C: Component + AsRef<[u8]>,
 {
-    fn to_rusqlite(component: C) -> Result<rusqlite::types::Value, StorageError> {
-        Ok(rusqlite::types::Value::Blob(component.into()))
+    fn to_rusqlite<'a>(component: &'a C) -> Result<rusqlite::types::ToSqlOutput<'a>, StorageError> {
+        Ok(rusqlite::types::ToSqlOutput::Borrowed(
+            rusqlite::types::ValueRef::Blob(component.as_ref()),
+        ))
     }
 }
+
+// impl<C> ComponentWrite<C> for BlobStorage
+// where
+//     C: Component + Into<Vec<u8>>,
+// {
+//     fn to_rusqlite<'a>(component: &'a C) -> Result<rusqlite::types::ToSqlOutput<'a>, StorageError> {
+//         Ok(rusqlite::types::ToSqlOutput::Owned(
+//             rusqlite::types::Value::Blob(component.into().as_slice()),
+//         ))
+//     }
+// }
 
 pub struct NullStorage;
 
@@ -100,9 +123,10 @@ impl<C> ComponentRead<C> for NullStorage
 where
     C: Component + DeserializeOwned,
 {
-    fn from_rusqlite(value: rusqlite::types::Value) -> Result<C, StorageError> {
+    fn from_rusqlite(value: &rusqlite::types::ToSqlOutput<'_>) -> Result<C, StorageError> {
         match value {
-            rusqlite::types::Value::Null => {
+            rusqlite::types::ToSqlOutput::Borrowed(rusqlite::types::ValueRef::Null)
+            | rusqlite::types::ToSqlOutput::Owned(rusqlite::types::Value::Null) => {
                 serde_json::from_str("null").map_err(|e| StorageError(e.to_string()))
             }
             other => Err(StorageError(format!("Unexpected type {other:?}"))),
@@ -114,80 +138,106 @@ impl<C> ComponentWrite<C> for NullStorage
 where
     C: Component + Serialize,
 {
-    fn to_rusqlite(_component: C) -> Result<rusqlite::types::Value, StorageError> {
-        Ok(rusqlite::types::Value::Null)
+    fn to_rusqlite<'a>(
+        _component: &'a C,
+    ) -> Result<rusqlite::types::ToSqlOutput<'a>, StorageError> {
+        Ok(rusqlite::types::ToSqlOutput::Owned(
+            rusqlite::types::Value::Null,
+        ))
     }
 }
 
-pub trait Bundle {
+pub trait Bundle: Sized {
     const COMPONENTS: &'static [&'static str];
     fn component_names() -> &'static [&'static str] {
         Self::COMPONENTS
     }
 
-    fn to_rusqlite(self) -> Result<Vec<(&'static str, rusqlite::types::Value)>, StorageError>;
+    fn to_rusqlite<'a>(
+        &'a self,
+    ) -> Result<Vec<(&'static str, rusqlite::types::ToSqlOutput<'a>)>, StorageError>;
+
+    fn from_rusqlite<'a>(
+        components: &[(&'static str, rusqlite::types::ToSqlOutput<'a>)],
+    ) -> Result<Option<Self>, StorageError>;
 }
 
 impl Bundle for () {
     const COMPONENTS: &'static [&'static str] = &[];
 
-    fn to_rusqlite(self) -> Result<Vec<(&'static str, rusqlite::types::Value)>, StorageError> {
+    fn to_rusqlite<'a>(
+        &'a self,
+    ) -> Result<Vec<(&'static str, rusqlite::types::ToSqlOutput<'a>)>, StorageError> {
         Ok(vec![])
+    }
+
+    fn from_rusqlite<'a>(
+        _components: &[(&'static str, rusqlite::types::ToSqlOutput<'a>)],
+    ) -> Result<Option<Self>, StorageError> {
+        Ok(Some(()))
     }
 }
 
 impl<C: Component> Bundle for C {
     const COMPONENTS: &'static [&'static str] = &[C::NAME];
 
-    fn to_rusqlite(self) -> Result<Vec<(&'static str, rusqlite::types::Value)>, StorageError> {
-        Ok(vec![(C::NAME, C::to_rusqlite(self)?)])
+    fn to_rusqlite<'a>(
+        &'a self,
+    ) -> Result<Vec<(&'static str, rusqlite::types::ToSqlOutput<'a>)>, StorageError> {
+        Ok(vec![(C::NAME, C::to_rusqlite(&self)?)])
+    }
+
+    fn from_rusqlite<'a>(
+        components: &[(&'static str, rusqlite::types::ToSqlOutput<'a>)],
+    ) -> Result<Option<Self>, StorageError> {
+        let Some((_, value)) = components
+            .into_iter()
+            .find(|(c, _data)| *c == C::component_name())
+        else {
+            return Ok(None);
+        };
+
+        Ok(Some(C::from_rusqlite(value)?))
     }
 }
 
-macro_rules! bundle_tuple_impls {
-    ($t:tt, $($ts:tt),+) => {
-        impl<$t, $($ts,)+> Bundle for ($t, $($ts,)+)
+macro_rules! bundle_tuples{
+    ($($ts:ident)*) => {
+        impl<$($ts,)+> Bundle for ($($ts,)+)
         where
-            $t: Component,
             $($ts: Component,)+
         {
             const COMPONENTS: &'static [&'static str] = &[
-                $t::NAME,
                 $($ts::NAME,)+
             ];
 
-            fn to_rusqlite(
-                self
-            ) -> Result<Vec<(&'static str, rusqlite::types::Value)>, StorageError> {
+            fn to_rusqlite<'a>(
+                &'a self
+            ) -> Result<Vec<(&'static str, rusqlite::types::ToSqlOutput<'a>)>, StorageError> {
                 #[allow(non_snake_case)]
-                let ($t, $($ts,)+) = self;
+                let ($($ts,)+) = self;
                 Ok(
                     vec![
-                        ($t::NAME, $t::to_rusqlite($t)?),
                         $(($ts::NAME, $ts::to_rusqlite($ts)?),)+
                     ]
                 )
             }
-        }
 
+            fn from_rusqlite<'a>(
+                components: &[(&'static str, rusqlite::types::ToSqlOutput<'a>)],
+            ) -> Result<Option<Self>, StorageError> {
+                #[allow(non_snake_case)]
+                let ($(Some($ts),)+) = (
+                    $(<$ts as Bundle>::from_rusqlite(components)?,)+
+                ) else {
+                    return Ok(None)
+                };
 
-        bundle_tuple_impls!($($ts),+);
-    };
-    ($t:tt) => {
-        impl<$t: Component> Bundle for ($t,) {
-            const COMPONENTS: &'static [&'static str] = &[ $t::NAME ];
-
-            fn to_rusqlite(
-                self
-            ) -> Result<Vec<(&'static str, rusqlite::types::Value)>, StorageError> {
-                let (t,) = self;
-                Ok(
-                    vec![($t::NAME, $t::to_rusqlite(t)?)]
-                )
+                Ok(Some(($($ts,)+)))
             }
         }
 
-    };
+    }
 }
 
-bundle_tuple_impls!(A, B, C);
+crate::tuple_macros::for_each_tuple!(bundle_tuples);

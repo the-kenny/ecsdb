@@ -3,11 +3,7 @@ use std::iter;
 use rusqlite::params;
 use tracing::debug;
 
-use crate::{
-    component::Bundle,
-    query::{self, QueryFilter},
-    Component, Ecs, EntityId, Error,
-};
+use crate::{component::Bundle, Component, Ecs, EntityId, Error};
 
 #[derive(Debug, Copy, Clone)]
 pub struct WithoutEntityId;
@@ -113,20 +109,27 @@ impl<'a> Entity<'a> {
             .0
             .conn
             .prepare("select data from components where entity = ?1 and component = ?2")?;
+
         let row = query
             .query_and_then(params![self.id(), name], |row| {
-                row.get::<_, rusqlite::types::Value>("data")
+                let data = row.get_ref("data")?;
+                Ok(T::from_rusqlite(&rusqlite::types::ToSqlOutput::Borrowed(
+                    data,
+                ))?)
             })?
-            .next();
+            .next()
+            .transpose();
 
-        match row {
-            None => Ok(None),
-            Some(Ok(data)) => {
-                let component = T::from_rusqlite(data)?;
-                Ok(Some(component))
-            }
-            _other => panic!(),
-        }
+        row
+
+        // match row {
+        //     None => Ok(None),
+        //     Some(Ok(data)) => {
+        //         let component = T::from_rusqlite(&rusqlite::types::ToSqlOutput::Borrowed(data))?;
+        //         Ok(Some(component))
+        //     }
+        //     _other => panic!(),
+        // }
     }
 }
 
@@ -181,7 +184,7 @@ impl<'a> Entity<'a> {
 
     #[tracing::instrument(name = "attach", level = "debug", skip_all)]
     pub fn try_attach<B: Bundle>(self, component: B) -> Result<Self, Error> {
-        let components = B::to_rusqlite(component)?;
+        let components = B::to_rusqlite(&component)?;
 
         let mut stmt = self.0.conn.prepare(
             r#"
@@ -254,7 +257,7 @@ impl<'a> NewEntity<'a> {
         self,
         bundle: B,
     ) -> Result<GenericEntity<'a, WithEntityId>, Error> {
-        let data = B::to_rusqlite(bundle)?;
+        let data = B::to_rusqlite(&bundle)?;
         assert!(!data.is_empty());
 
         let mut stmt = self.0.conn.prepare(

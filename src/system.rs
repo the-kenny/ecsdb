@@ -1,13 +1,10 @@
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error};
 
-use crate::{self as ecsdb, query, Component, Ecs, Entity, EntityId};
+use crate::{self as ecsdb, query, Component, Ecs, Entity};
 
 use core::marker::PhantomData;
-use std::{
-    borrow::Cow,
-    collections::{HashMap, HashSet},
-};
+use std::{borrow::Cow, collections::HashMap};
 
 #[derive(Serialize, Deserialize, Component, Debug, PartialEq, Eq, Hash)]
 pub struct Name(pub String);
@@ -272,11 +269,14 @@ impl SystemParam for &'_ Ecs {
     }
 }
 
-impl<D, F> SystemParam for query::Query<'_, D, F> {
+impl<D, F> SystemParam for query::Query<'_, D, F>
+where
+    F: query::QueryFilter + Default,
+{
     type Item<'world> = query::Query<'world, D, F>;
 
     fn get_param<'world>(world: &'world Ecs, _system: &str) -> Self::Item<'world> {
-        query::Query::new(world)
+        query::Query::new(world, F::default())
     }
 }
 

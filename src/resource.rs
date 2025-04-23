@@ -25,18 +25,15 @@ impl Ecs {
             .prepare("select data from resources where name = ?1")?;
         let row = query
             .query_and_then(params![name], |row| {
-                row.get::<_, rusqlite::types::Value>("data")
+                let data = row.get_ref("data")?;
+                Ok(R::from_rusqlite(&rusqlite::types::ToSqlOutput::Borrowed(
+                    data,
+                ))?)
             })?
-            .next();
+            .next()
+            .transpose();
 
-        match row {
-            None => Ok(None),
-            Some(Ok(data)) => {
-                let component = R::from_rusqlite(data)?;
-                Ok(Some(component))
-            }
-            _other => panic!(),
-        }
+        row
     }
 
     pub fn resource_mut<'a, R: Resource + Default>(&'a mut self) -> impl DerefMut<Target = R> + 'a {
@@ -56,7 +53,7 @@ impl Ecs {
 
     pub fn try_attach_resource<R: Resource>(&self, resource: R) -> Result<(), Error> {
         let name = R::component_name();
-        let data = R::to_rusqlite(resource)?;
+        let data = R::to_rusqlite(&resource)?;
 
         self.conn.execute(
             "insert or replace into resources (name, data) values (?1, ?2)",

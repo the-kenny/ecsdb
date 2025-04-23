@@ -84,17 +84,24 @@ fn impl_derive_component(ast: &syn::DeriveInput) -> TokenStream {
                     const NAME: &'static str = concat!(std::module_path!(), "::", stringify!(#name));
                 }
 
-                impl Into<Vec<u8>> for #name {
-                    fn into(self) -> Vec<u8> {
-                        self.0
-                    }
-                }
 
-                impl From<Vec<u8>> for #name {
-                    fn from(value: Vec<u8>) -> Self {
-                        Self(value)
-                    }
-                }
+                // impl AsRef<[u8]> for #name {
+                //     fn as_ref(&self) -> &[u8] {
+                //         &self.0
+                //     }
+                // }
+
+                // impl Into<Vec<u8>> for #name {
+                //     fn into(self) -> Vec<u8> {
+                //         self.0
+                //     }
+                // }
+
+                // impl From<Vec<u8>> for #name {
+                //     fn from(value: Vec<u8>) -> Self {
+                //         Self(value)
+                //     }
+                // }
             }
         }
     };
