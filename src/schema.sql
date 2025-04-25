@@ -2,8 +2,7 @@
 create table if not exists components (
     entity integer not null,
     component text not null,
-    data blob,
-    last_modified rfc3339 not null default (strftime ('%Y-%m-%dT%H:%M:%fZ'))
+    data blob
 );
 
 create unique index if not exists components_entity_component_unqiue_idx on components (entity, component);
@@ -21,17 +20,82 @@ group by
 order by
     component asc;
 
-create trigger if not exists components_last_modified_trigger before
-update on components for each row begin
-update components
+-- Update ecsdb::LastUpdated on update
+create trigger if not exists components_last_modified_update_trigger after
+update on components for each row when new.component != 'ecsdb::LastUpdated' begin
+insert into
+    components (entity, component, data)
+values
+    (
+        new.entity,
+        'ecsdb::LastUpdated',
+        json_quote (strftime ('%Y-%m-%dT%H:%M:%fZ'))
+    ) on conflict (entity, component) do
+update
 set
-    last_modified = strftime ('%Y-%m-%dT%H:%M:%fZ')
-where
-    entity = new.entity
-    and component = new.component;
+    data = excluded.data;
 
 end;
 
+-- Update ecsdb::LastUpdated on insert
+create trigger if not exists components_last_modified_insert_trigger after insert on components for each row when new.component != 'ecsdb::LastUpdated' begin
+insert into
+    components (entity, component, data)
+values
+    (
+        new.entity,
+        'ecsdb::LastUpdated',
+        json_quote (strftime ('%Y-%m-%dT%H:%M:%fZ'))
+    ) on conflict (entity, component) do
+update
+set
+    data = excluded.data;
+
+end;
+
+-- Update ecsdb::LastUpdated on delete, except when it's the last component
+create trigger if not exists components_last_modified_delete_trigger after delete on components for each row when old.component != 'ecsdb::LastUpdated'
+and (
+    select
+        true
+    from
+        entity_components
+    where
+        entity = old.entity
+        and components != json_array ('ecsdb::LastUpdated')
+) begin
+insert into
+    components (entity, component, data)
+values
+    (
+        old.entity,
+        'ecsdb::LastUpdated',
+        json_quote (strftime ('%Y-%m-%dT%H:%M:%fZ'))
+    ) on conflict (entity, component) do
+update
+set
+    data = excluded.data;
+
+end;
+
+-- Delete ecsdb::LastUpdated when it's the last remaining component
+create trigger if not exists components_last_modified_delete_last_component_trigger after delete on components for each row when (
+    select
+        true
+    from
+        entity_components
+    where
+        entity = old.entity
+        and components = json_array ('ecsdb::LastUpdated')
+) begin
+delete from components
+where
+    entity = old.entity
+    and component = 'ecsdb::LastUpdated';
+
+end;
+
+-- Resources
 create table if not exists resources (
     name text not null unique,
     data blob,

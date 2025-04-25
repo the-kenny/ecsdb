@@ -17,7 +17,12 @@ pub mod resource;
 pub use resource::*;
 
 pub mod system;
-use ::rusqlite::params;
+
+pub mod rusqlite {
+    pub use rusqlite::*;
+}
+
+use serde::{Deserialize, Serialize};
 pub use system::*;
 
 mod tuple_macros;
@@ -158,37 +163,8 @@ impl Ecs {
     }
 }
 
-impl Ecs {
-    /// Returns the highest `last_modified` from all components of `entity`.
-    /// Returns `chrono::DateTime::MIN_UTC` if `entity` has no components
-    fn try_last_modified(
-        &self,
-        entity: EntityId,
-    ) -> Result<chrono::DateTime<chrono::Utc>, rusqlite::Error> {
-        let mut stmt = self.conn.prepare_cached(
-            "select max(last_modified) as last_modified from components where entity = ?",
-        )?;
-
-        let last_modified = stmt
-            .query_map(params![&entity], |row| {
-                row.get::<_, Option<String>>("last_modified")
-            })?
-            .flat_map(|dt| {
-                dt.unwrap_or_else(|e| panic!("max(last_modified) on {entity} TEXT error={e}"))
-            })
-            .next();
-
-        let last_modified = if let Some(last_modified) = last_modified {
-            chrono::DateTime::parse_from_rfc3339(&last_modified)
-                .expect("Valid chrono::DateTime")
-                .to_utc()
-        } else {
-            chrono::DateTime::<chrono::Utc>::MIN_UTC
-        };
-
-        Ok(last_modified)
-    }
-}
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct LastUpdated(pub chrono::DateTime<chrono::Utc>);
 
 impl Ecs {
     #[instrument(name = "fetch", level = "debug", skip_all)]
@@ -196,7 +172,6 @@ impl Ecs {
         &'a self,
         sql_query: query::ir::Query,
     ) -> Result<impl Iterator<Item = Q::Output<'a>> + 'a, Error> {
-        // let sql = query.sql_query().to_string(sea_query::SqliteQueryBuilder);
         let (sql, placeholders) = sql_query.into_sql();
         debug!(sql);
 
@@ -222,10 +197,22 @@ impl Ecs {
     }
 }
 
-pub mod rusqlite {
-    pub use rusqlite::*;
+impl AsRef<chrono::DateTime<chrono::Utc>> for LastUpdated {
+    fn as_ref(&self) -> &chrono::DateTime<chrono::Utc> {
+        &self.0
+    }
 }
 
+impl Component for LastUpdated {
+    type Storage = component::JsonStorage;
+    const NAME: &'static str = "ecsdb::LastUpdated";
+}
+
+impl Default for LastUpdated {
+    fn default() -> Self {
+        Self(chrono::DateTime::<chrono::Utc>::MIN_UTC)
+    }
+}
 impl Ecs {
     pub fn raw_sql<'a>(&'a self) -> &'a rusqlite::Connection {
         &self.conn

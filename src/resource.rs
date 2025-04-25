@@ -56,7 +56,10 @@ impl Ecs {
         let data = R::to_rusqlite(&resource)?;
 
         self.conn.execute(
-            "insert or replace into resources (name, data) values (?1, ?2)",
+            "
+            insert into resources (name, data) values (?1, ?2)
+            on conflict (name) do update set data = excluded.data
+            ",
             params![name, data],
         )?;
 

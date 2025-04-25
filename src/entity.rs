@@ -1,9 +1,9 @@
 use std::iter;
 
 use rusqlite::params;
-use tracing::debug;
+use tracing::{debug, trace};
 
-use crate::{component::Bundle, Component, Ecs, EntityId, Error};
+use crate::{component::Bundle, Component, Ecs, EntityId, Error, LastUpdated};
 
 #[derive(Debug, Copy, Clone)]
 pub struct WithoutEntityId;
@@ -41,7 +41,10 @@ impl<'a> Entity<'a> {
 
     #[tracing::instrument(name = "last_modified", level = "debug")]
     pub fn try_last_modified(&self) -> Result<chrono::DateTime<chrono::Utc>, Error> {
-        self.0.try_last_modified(self.id()).map_err(Error::from)
+        // self.0.try_last_modified(self.id()).map_err(Error::from)
+        self.try_component()
+            .map(Option::unwrap_or_default)
+            .map(|LastUpdated(lu)| lu)
     }
 
     pub fn component_names(&self) -> impl Iterator<Item = String> {
@@ -190,12 +193,13 @@ impl<'a> Entity<'a> {
             r#"
             insert into components (entity, component, data)
             values (?1, ?2, ?3)
-                on conflict (entity, component) do update
-                set data = excluded.data where data is not excluded.data;
+            on conflict (entity, component) do update
+            set data = excluded.data where data is not excluded.data;
             "#,
         )?;
 
         for (component, data) in components {
+            trace!(params = ?(self.id(), component, &data));
             let attached_rows = stmt.execute(params![self.id(), component, data])?;
             if attached_rows > 0 {
                 debug!(entity = self.id(), component, "attached");
@@ -262,14 +266,17 @@ impl<'a> NewEntity<'a> {
 
         let mut stmt = self.0.conn.prepare(
             r#"
-            insert or replace into components (entity, component, data)
+            insert into components (entity, component, data)
             values ((select coalesce(?1, max(entity)+1, 100) from components), ?2, ?3)
+            on conflict (entity, component) do update set data = excluded.data
             returning entity
             "#,
         )?;
 
         let mut eid = None;
         for (component, data) in data {
+            trace!(params = ?(eid, component, &data));
+
             eid = Some(stmt.query_row(params![eid, component, data], |row| {
                 row.get::<_, EntityId>("entity")
             })?);
