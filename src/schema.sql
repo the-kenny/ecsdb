@@ -1,3 +1,4 @@
+-- Components
 create table if not exists components (
     entity integer not null,
     component text not null,
@@ -8,6 +9,17 @@ create table if not exists components (
 create unique index if not exists components_entity_component_unqiue_idx on components (entity, component);
 
 create index if not exists components_component_idx on components (component);
+
+create view if not exists entity_components (entity, components) as
+select
+    entity,
+    json_group_array (component)
+from
+    components
+group by
+    entity
+order by
+    component asc;
 
 create trigger if not exists components_last_modified_trigger before
 update on components for each row begin
