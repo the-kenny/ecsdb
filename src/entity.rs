@@ -1,9 +1,7 @@
-use std::iter;
-
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use tracing::{debug, trace};
 
-use crate::{component::Bundle, Component, Ecs, EntityId, Error, LastUpdated};
+use crate::{component::Bundle, query, Component, DynComponent, Ecs, EntityId, Error, LastUpdated};
 
 #[derive(Debug, Copy, Clone)]
 pub struct WithoutEntityId;
@@ -24,6 +22,10 @@ impl<'a, T> GenericEntity<'a, T> {
     pub(crate) fn with_id(ecs: &'a Ecs, eid: EntityId) -> Entity<'a> {
         GenericEntity(ecs, WithEntityId(eid))
     }
+
+    pub fn db(&'a self) -> &'a Ecs {
+        self.0
+    }
 }
 
 impl<'a> Entity<'a> {
@@ -31,8 +33,22 @@ impl<'a> Entity<'a> {
         (self.1).0
     }
 
-    pub fn db(&'a self) -> &'a Ecs {
+    pub fn exists(&self) -> bool {
+        self.try_exists().expect("Entity::try_exists")
+    }
+
+    #[tracing::instrument(name = "exists", level = "debug")]
+    pub fn try_exists(&self) -> Result<bool, Error> {
         self.0
+            .conn
+            .query_row(
+                "select true from components where entity = ?1",
+                params![self.id()],
+                |_| Ok(()),
+            )
+            .optional()
+            .map(|o| o.is_some())
+            .map_err(Error::from)
     }
 
     pub fn last_modified(&self) -> chrono::DateTime<chrono::Utc> {
@@ -111,7 +127,7 @@ impl<'a> Entity<'a> {
         let mut query = self
             .0
             .conn
-            .prepare("select data from components where entity = ?1 and component = ?2")?;
+            .prepare_cached("select data from components where entity = ?1 and component = ?2")?;
 
         let row = query
             .query_and_then(params![self.id(), name], |row| {
@@ -124,15 +140,32 @@ impl<'a> Entity<'a> {
             .transpose();
 
         row
+    }
+}
 
-        // match row {
-        //     None => Ok(None),
-        //     Some(Ok(data)) => {
-        //         let component = T::from_rusqlite(&rusqlite::types::ToSqlOutput::Borrowed(data))?;
-        //         Ok(Some(component))
-        //     }
-        //     _other => panic!(),
-        // }
+impl<'a> Entity<'a> {
+    pub fn dyn_component(&self, name: &'a str) -> Option<DynComponent<'a>> {
+        self.try_dyn_component(name).unwrap()
+    }
+
+    pub fn try_dyn_component(&self, name: &'a str) -> Result<Option<DynComponent<'a>>, Error> {
+        let mut query = self
+            .0
+            .conn
+            .prepare_cached("select data from components where entity = ?1 and component = ?2")?;
+
+        let row = query
+            .query_and_then(params![self.id(), name], |row| {
+                let data = row.get("data")?;
+                Ok(DynComponent(
+                    name,
+                    rusqlite::types::ToSqlOutput::Owned(data),
+                ))
+            })?
+            .next()
+            .transpose();
+
+        row
     }
 }
 
@@ -165,16 +198,25 @@ pub enum ModifyComponentError {
     Fn(anyhow::Error),
 }
 
-// impl<'a> Entity<'a> {
-//     pub fn try_matches<F: QueryFilter>(&self) -> Result<bool, Error> {
-//         let q = query::Query::<EntityId, (), EntityId>::new(self.db());
-//         Ok(q.try_iter()?.next().is_some())
-//     }
+impl<'a> Entity<'a> {
+    pub fn try_matches<D: query::QueryFilter + Default>(&self) -> Result<bool, Error> {
+        let q = query::Query::<(), D>::new(self.db(), D::default());
+        Ok(q.try_iter()?.next().is_some())
+    }
 
-//     pub fn matches<F: QueryFilter>(&self) -> bool {
-//         self.try_matches::<F>().unwrap()
-//     }
-// }
+    pub fn matches<D: query::QueryFilter + Default>(&self) -> bool {
+        self.try_matches::<D>().unwrap()
+    }
+
+    // pub fn try_matches_filtered<F: query::QueryFilter>(&self, filter: F) -> Result<bool, Error> {
+    //     let q = query::Query::<(), F>::new(self.db(), filter);
+    //     Ok(q.try_iter()?.next().is_some())
+    // }
+
+    // pub fn matches_filtered<F: query::QueryFilter>(&self, filter: F) -> bool {
+    //     self.try_matches_filtered::<F>(filter).unwrap()
+    // }
+}
 
 impl<'a> Entity<'a> {
     pub fn attach<B: Bundle>(self, component: B) -> Self {
@@ -231,15 +273,9 @@ impl<'a> Entity<'a> {
     }
 }
 
-impl<'a> NewEntity<'a> {
-    pub fn or_none(self) -> Option<Self> {
-        None
-    }
-}
-
 impl<'a> Entity<'a> {
     pub fn or_none(self) -> Option<Self> {
-        Some(self)
+        self.exists().then_some(self)
     }
 }
 
@@ -301,59 +337,6 @@ impl<'a> NewEntity<'a> {
     #[tracing::instrument(name = "component_names", level = "debug")]
     pub fn try_component_names(&self) -> Result<impl Iterator<Item = String>, Error> {
         Ok(std::iter::empty())
-    }
-}
-
-impl<'a> Entity<'a> {
-    // pub fn direct_children(&'a self) -> impl Iterator<Item = Entity<'a>> {
-    //     self.db().direct_children(self.id())
-    // }
-
-    // pub fn all_children(&'a self) -> impl Iterator<Item = Entity<'a>> + 'a {
-    //     self.db().all_children(self.id())
-    // }
-
-    // pub fn parent(&'a self) -> Option<Entity<'a>> {
-    //     self.component::<BelongsTo>()
-    //         .map(|BelongsTo(parent)| self.db().entity(parent))
-    // }
-
-    // pub fn parents(&'a self) -> impl Iterator<Item = Entity<'a>> + 'a {
-    //     let parent = self
-    //         .component::<BelongsTo>()
-    //         .map(|BelongsTo(parent)| self.db().entity(parent));
-
-    //     iter::successors(parent, |x| {
-    //         // For some reasons the lifetimes don't work out when we just call
-    //         // `x.parent()` here
-    //         x.component::<BelongsTo>()
-    //             .map(|BelongsTo(parent)| self.db().entity(parent))
-    //     })
-    // }
-
-    // #[tracing::instrument(level = "debug")]
-    // pub fn destroy_recursive(&'a self) {
-    //     for entity in iter::once(*self).chain(self.all_children()) {
-    //         entity.destroy()
-    //     }
-    // }
-}
-
-impl<'a> NewEntity<'a> {
-    pub fn direct_children(&'a self) -> impl Iterator<Item = Entity<'a>> + 'a {
-        iter::empty()
-    }
-
-    pub fn all_children(&'a self) -> impl Iterator<Item = Entity<'a>> + 'a {
-        iter::empty()
-    }
-
-    pub fn parent(&'a self) -> Option<Entity<'a>> {
-        None
-    }
-
-    pub fn parents(&'a self) -> impl Iterator<Item = Entity<'a>> + 'a {
-        iter::empty()
     }
 }
 

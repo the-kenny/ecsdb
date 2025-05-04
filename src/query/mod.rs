@@ -34,7 +34,7 @@ where
 }
 
 impl<'a, C, F> Query<'a, C, F> {
-    pub fn new(ecs: &'a crate::Ecs, filter: F) -> Self {
+    pub fn new(ecs: &'a crate::Ecs, filter: F) -> Query<'a, C, F> {
         Self {
             ecs,
             data: PhantomData,
@@ -308,7 +308,7 @@ mod tuples {
                 }
             }
 
-            impl<$($ts,)+> QueryFilter for With <($($ts,)+)>
+            impl<$($ts,)+> QueryFilter for With<($($ts,)+)>
             where
                 $($ts: Component,)+
             {
@@ -320,7 +320,7 @@ mod tuples {
                 }
             }
 
-            impl<$($ts,)+> QueryFilter for Without <($($ts,)+)>
+            impl<$($ts,)+> QueryFilter for Without<($($ts,)+)>
             where
                 $($ts: Component,)+
             {

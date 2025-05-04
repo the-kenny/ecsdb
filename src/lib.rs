@@ -3,6 +3,9 @@ pub mod component;
 use component::Bundle;
 pub use component::{Component, ComponentRead, ComponentWrite};
 
+pub mod dyn_component;
+pub use dyn_component::DynComponent;
+
 pub mod entity;
 pub use entity::{Entity, NewEntity};
 
@@ -107,14 +110,6 @@ impl Ecs {
         self.try_query::<D>().unwrap()
     }
 
-    pub fn query_filtered<'a, D, F>(&'a self) -> impl Iterator<Item = D::Output<'a>> + 'a
-    where
-        D: query::QueryData + 'a,
-        F: query::QueryFilter + Default + 'a,
-    {
-        self.try_query_filtered::<D, F>().unwrap()
-    }
-
     #[instrument(name = "query", level = "debug", skip_all)]
     pub fn try_query<'a, Q>(&'a self) -> Result<impl Iterator<Item = Q::Output<'a>> + 'a, Error>
     where
@@ -123,6 +118,14 @@ impl Ecs {
         debug!(query = std::any::type_name::<Q>());
         let query = query::Query::<Q>::new(self, ());
         query.try_iter()
+    }
+
+    pub fn query_filtered<'a, D, F>(&'a self) -> impl Iterator<Item = D::Output<'a>> + 'a
+    where
+        D: query::QueryData + 'a,
+        F: query::QueryFilter + Default + 'a,
+    {
+        self.try_query_filtered::<D, F>().unwrap()
     }
 
     #[instrument(name = "query_filtered", level = "debug", skip_all)]
@@ -279,6 +282,7 @@ mod tests {
 
     #[test]
     fn component_overwrites() {
+        tracing_subscriber::fmt::init();
         let db = super::Ecs::open_in_memory().unwrap();
 
         let entity = db
@@ -301,11 +305,12 @@ mod tests {
     use super::query::*;
 
     #[test]
-    fn queries() {
+    fn query_tuples() {
         let db = super::Ecs::open_in_memory().unwrap();
         let _ = db.query::<MarkerComponent>();
         let _ = db.query::<Entity>();
         let _ = db.query::<(Entity, MarkerComponent)>();
+
         let _ = db.query_filtered::<Entity, With<MarkerComponent>>();
         let _ = db.query_filtered::<Entity, Without<MarkerComponent>>();
         let _ = db.query_filtered::<MarkerComponent, Or<(
@@ -319,15 +324,15 @@ mod tests {
         )>();
         let _ = db.query_filtered::<MarkerComponent, Without<ComponentWithData>>();
         let _ = db.query_filtered::<MarkerComponent, Without<ComponentWithData>>();
-        let _ = db.query::<(
-            MarkerComponent,
-            MarkerComponent,
-            MarkerComponent,
-            MarkerComponent,
-            MarkerComponent,
-            MarkerComponent,
-            MarkerComponent,
-            MarkerComponent,
+        let _ = db.query_filtered::<(), (
+            With<MarkerComponent>,
+            With<MarkerComponent>,
+            With<MarkerComponent>,
+            With<MarkerComponent>,
+            With<MarkerComponent>,
+            With<MarkerComponent>,
+            Without<MarkerComponent>,
+            With<MarkerComponent>,
         )>();
     }
 
@@ -344,6 +349,18 @@ mod tests {
         assert_eq!(db.query::<()>().count(), 2);
         assert_eq!(db.query::<MarkerComponent>().count(), 1);
         assert_eq!(db.query::<MarkerComponent>().count(), 1);
+    }
+
+    #[test]
+    fn entity_match_filtered() {
+        let db = super::Ecs::open_in_memory().unwrap();
+
+        db.new_entity()
+            .attach(MarkerComponent)
+            .attach(ComponentWithData(1234));
+
+        db.new_entity().attach(ComponentWithData(1234));
+
         assert_eq!(
             db.query_filtered::<EntityId, Without<MarkerComponent>>()
                 .count(),
@@ -539,8 +556,28 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn entity_matches() {
+        #[derive(Serialize, Deserialize, Component)]
+        struct A;
+        #[derive(Serialize, Deserialize, Component)]
+        struct B;
+
+        let db = super::Ecs::open_in_memory().unwrap();
+        let e = db.new_entity().attach(A);
+        let e2 = db.new_entity().attach((A, B));
+
+        assert!(e.matches::<With<A>>());
+        assert!(!e.matches::<With<B>>());
+        assert!(!e.matches::<With<(A, B)>>());
+
+        assert!(e2.matches::<With<A>>());
+        assert!(e2.matches::<With<B>>());
+        assert!(e2.matches::<With<(A, B)>>());
+    }
+
     // #[test]
-    // fn entity_matches() {
+    // fn entity_matches_filtered() {
     //     #[derive(Serialize, Deserialize, Component)]
     //     struct A;
     //     #[derive(Serialize, Deserialize, Component)]
@@ -550,7 +587,7 @@ mod tests {
     //     let e = db.new_entity().attach(A);
     //     let e2 = db.new_entity().attach((A, B));
 
-    //     assert!(e.matches::<With<A>>());
+    //     assert!(e.matches_filtered((With::<A>::default(), e.id())));
     //     assert!(!e.matches::<With<B>>());
     //     assert!(!e.matches::<With<(A, B)>>());
 
