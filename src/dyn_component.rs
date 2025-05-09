@@ -25,12 +25,13 @@ impl<'a> DynComponent<'a> {
     pub fn as_json(&self) -> Option<serde_json::value::Value> {
         use rusqlite::types::{ToSqlOutput, Value, ValueRef};
 
-        let text = match self.1 {
-            ToSqlOutput::Borrowed(ValueRef::Text(s)) => s,
-            ToSqlOutput::Owned(Value::Text(ref s)) => s.as_bytes(),
+        match self.1 {
+            ToSqlOutput::Borrowed(ValueRef::Text(s)) => serde_json::from_slice(s).ok(),
+            ToSqlOutput::Owned(Value::Text(ref s)) => serde_json::from_slice(s.as_bytes()).ok(),
+            ToSqlOutput::Owned(Value::Null) | ToSqlOutput::Borrowed(ValueRef::Null) => {
+                Some(serde_json::Value::Null)
+            }
             _ => todo!(),
-        };
-
-        serde_json::from_slice(text).ok()
+        }
     }
 }
