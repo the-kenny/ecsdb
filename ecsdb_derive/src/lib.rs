@@ -26,6 +26,7 @@ fn impl_derive_component(ast: &syn::DeriveInput) -> TokenStream {
     let name = ast.ident.clone();
 
     let mut storage = Storage::Json;
+    let mut component_name = quote!(concat!(std::module_path!(), "::", stringify!(#name)));
 
     if let Data::Struct(ref struc) = ast.data {
         if matches!(struc.fields, Fields::Unit) {
@@ -37,7 +38,8 @@ fn impl_derive_component(ast: &syn::DeriveInput) -> TokenStream {
         let nested = component_attribute
             .parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
             .unwrap();
-        for meta in nested.clone() {
+
+        for meta in nested {
             match meta {
                 Meta::NameValue(mnv) if mnv.path.is_ident("storage") => {
                     if let Expr::Lit(expr_lit) = &mnv.value {
@@ -47,6 +49,14 @@ fn impl_derive_component(ast: &syn::DeriveInput) -> TokenStream {
                                 "blob" => storage = Storage::Blob,
                                 other => panic!("storage {other} not supported"),
                             }
+                        }
+                    }
+                }
+                Meta::NameValue(mnv) if mnv.path.is_ident("name") => {
+                    if let Expr::Lit(expr_lit) = &mnv.value {
+                        if let Lit::Str(lit) = &expr_lit.lit {
+                            let custom_name = lit.value();
+                            component_name = quote!(#custom_name);
                         }
                     }
                 }
@@ -61,19 +71,19 @@ fn impl_derive_component(ast: &syn::DeriveInput) -> TokenStream {
     let gen = match storage {
         Storage::Json => {
             quote! {
-                    impl ecsdb::component::Component for #name {
-                        type Storage =ecsdb::component::JsonStorage;
-                        const NAME: &'static str = concat!(std::module_path!(), "::", stringify!(#name));
-                    }
+                impl ecsdb::component::Component for #name {
+                    type Storage = ecsdb::component::JsonStorage;
+                    const NAME: &'static str = #component_name;
+                }
             }
         }
 
         Storage::Null => {
             quote! {
-                    impl ecsdb::component::Component for #name {
-                        type Storage = ecsdb::component::NullStorage;
-                        const NAME: &'static str = concat!(std::module_path!(), "::", stringify!(#name));
-                    }
+                impl ecsdb::component::Component for #name {
+                    type Storage = ecsdb::component::NullStorage;
+                    const NAME: &'static str = #component_name;
+                }
             }
         }
 
@@ -81,27 +91,8 @@ fn impl_derive_component(ast: &syn::DeriveInput) -> TokenStream {
             quote! {
                 impl ecsdb::component::Component for #name {
                     type Storage = ecsdb::component::BlobStorage;
-                    const NAME: &'static str = concat!(std::module_path!(), "::", stringify!(#name));
+                    const NAME: &'static str = #component_name;
                 }
-
-
-                // impl AsRef<[u8]> for #name {
-                //     fn as_ref(&self) -> &[u8] {
-                //         &self.0
-                //     }
-                // }
-
-                // impl Into<Vec<u8>> for #name {
-                //     fn into(self) -> Vec<u8> {
-                //         self.0
-                //     }
-                // }
-
-                // impl From<Vec<u8>> for #name {
-                //     fn from(value: Vec<u8>) -> Self {
-                //         Self(value)
-                //     }
-                // }
             }
         }
     };

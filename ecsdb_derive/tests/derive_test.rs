@@ -61,6 +61,21 @@ fn test_component() {
 }
 
 #[test]
+fn derive_name_attribute() {
+    #[derive(Component)]
+    #[component(name = "foo::Bar")]
+    struct X;
+
+    assert_eq!(X::component_name(), "foo::Bar");
+
+    #[derive(Resource)]
+    #[component(name = "foo::Bar")]
+    struct Y;
+
+    assert_eq!(Y::component_name(), "foo::Bar");
+}
+
+#[test]
 fn test_resource() {
     #[derive(Resource)]
     struct Foo;
