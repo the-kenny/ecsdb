@@ -1,6 +1,6 @@
 pub mod component;
 
-use component::Bundle;
+pub use component::Bundle;
 pub use component::{Component, ComponentRead, ComponentWrite};
 
 pub mod dyn_component;
@@ -233,6 +233,7 @@ mod tests {
     use crate::{self as ecsdb, Ecs, Entity, EntityId};
 
     use anyhow::anyhow;
+    use ecsdb_derive::Bundle;
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Serialize, Deserialize, Component)]
@@ -300,6 +301,41 @@ mod tests {
             .new_entity()
             .attach((ComponentWithData(42), ComponentWithData(23)));
         assert_eq!(entity.component::<ComponentWithData>().unwrap().0, 23);
+    }
+
+    #[test]
+    fn bundle_struct() {
+        let db = super::Ecs::open_in_memory().unwrap();
+
+        #[derive(Debug, Bundle)]
+        struct Bundle {
+            a: A,
+            b: B,
+            data: ComponentWithData,
+        }
+
+        let bundle = Bundle {
+            a: A,
+            b: B,
+            data: ComponentWithData(1234),
+        };
+
+        let entity = db.new_entity().attach(bundle);
+
+        assert!(entity.has::<(A, B, ComponentWithData)>());
+    }
+
+    #[test]
+    fn bundle_tuplestruct() {
+        let db = super::Ecs::open_in_memory().unwrap();
+
+        #[derive(Debug, Bundle)]
+        struct Bundle(A, B, ComponentWithData);
+
+        let bundle = Bundle(A, B, ComponentWithData(1234));
+        let entity = db.new_entity().attach(bundle);
+
+        assert!(entity.has::<(A, B, ComponentWithData)>());
     }
 
     use super::query::*;

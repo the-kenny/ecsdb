@@ -1,3 +1,5 @@
+use tracing::warn;
+
 use crate::{component, Component};
 
 pub struct DynComponent<'a>(
@@ -31,7 +33,18 @@ impl<'a> DynComponent<'a> {
             ToSqlOutput::Owned(Value::Null) | ToSqlOutput::Borrowed(ValueRef::Null) => {
                 Some(serde_json::Value::Null)
             }
-            _ => todo!(),
+            ToSqlOutput::Owned(ref o) => {
+                warn!(r#type = ?o.data_type(), "DynComponent::as_json unsupported");
+                None
+            }
+            ToSqlOutput::Borrowed(ref b) => {
+                warn!(r#type = ?b.data_type(), "DynComponent::as_json unsupported");
+                None
+            }
+            ref x => {
+                warn!(value = ?x, "DynComponent::as_json unsupported");
+                None
+            }
         }
     }
 }

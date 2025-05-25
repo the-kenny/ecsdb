@@ -2,7 +2,7 @@ use std::any::Any;
 
 use serde::{de::DeserializeOwned, Serialize};
 
-pub use ecsdb_derive::Component;
+pub use ecsdb_derive::{Bundle, Component};
 
 pub trait Component: Sized + Any + ComponentRead<Self> + ComponentWrite<Self> {
     type Storage;
@@ -147,19 +147,18 @@ where
     }
 }
 
+pub type BundleData<'a> = Vec<(&'static str, rusqlite::types::ToSqlOutput<'a>)>;
+pub type BundleDataRef<'a> = &'a [(&'static str, rusqlite::types::ToSqlOutput<'a>)];
+
 pub trait Bundle: Sized {
     const COMPONENTS: &'static [&'static str];
+
     fn component_names() -> &'static [&'static str] {
         Self::COMPONENTS
     }
 
-    fn to_rusqlite<'a>(
-        &'a self,
-    ) -> Result<Vec<(&'static str, rusqlite::types::ToSqlOutput<'a>)>, StorageError>;
-
-    fn from_rusqlite<'a>(
-        components: &[(&'static str, rusqlite::types::ToSqlOutput<'a>)],
-    ) -> Result<Option<Self>, StorageError>;
+    fn to_rusqlite<'a>(&'a self) -> Result<BundleData<'a>, StorageError>;
+    fn from_rusqlite<'a>(components: BundleDataRef<'a>) -> Result<Option<Self>, StorageError>;
 }
 
 impl Bundle for () {
