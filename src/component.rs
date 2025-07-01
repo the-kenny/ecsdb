@@ -46,7 +46,7 @@ where
 pub struct JsonStorage;
 
 #[derive(thiserror::Error, Debug)]
-#[error("Error storing Component: {0}")]
+#[error("Error reading/writing Component: {0}")]
 pub struct StorageError(String);
 
 impl<C> ComponentRead<C> for JsonStorage
@@ -147,8 +147,8 @@ where
     }
 }
 
-pub type BundleData<'a> = Vec<(&'static str, rusqlite::types::ToSqlOutput<'a>)>;
-pub type BundleDataRef<'a> = &'a [(&'static str, rusqlite::types::ToSqlOutput<'a>)];
+pub type BundleData<'a> = Vec<(&'static str, Option<rusqlite::types::ToSqlOutput<'a>>)>;
+pub type BundleDataRef<'a> = &'a [(&'static str, Option<rusqlite::types::ToSqlOutput<'a>>)];
 
 pub trait Bundle: Sized {
     const COMPONENTS: &'static [&'static str];
@@ -158,45 +158,57 @@ pub trait Bundle: Sized {
     }
 
     fn to_rusqlite<'a>(&'a self) -> Result<BundleData<'a>, StorageError>;
-    fn from_rusqlite<'a>(components: BundleDataRef<'a>) -> Result<Option<Self>, StorageError>;
+    // fn from_rusqlite<'a>(components: BundleDataRef<'a>) -> Result<Option<Self>, StorageError>;
+}
+
+pub trait BundleComponent {
+    const NAME: &'static str;
+    fn to_rusqlite<'a>(&'a self) -> Result<Option<rusqlite::types::ToSqlOutput<'a>>, StorageError>;
 }
 
 impl Bundle for () {
     const COMPONENTS: &'static [&'static str] = &[];
 
-    fn to_rusqlite<'a>(
-        &'a self,
-    ) -> Result<Vec<(&'static str, rusqlite::types::ToSqlOutput<'a>)>, StorageError> {
+    fn to_rusqlite<'a>(&'a self) -> Result<BundleData<'a>, StorageError> {
         Ok(vec![])
     }
+}
 
-    fn from_rusqlite<'a>(
-        _components: &[(&'static str, rusqlite::types::ToSqlOutput<'a>)],
-    ) -> Result<Option<Self>, StorageError> {
-        Ok(Some(()))
+impl<C: Component> BundleComponent for C {
+    const NAME: &'static str = C::NAME;
+
+    fn to_rusqlite<'a>(&'a self) -> Result<Option<rusqlite::types::ToSqlOutput<'a>>, StorageError> {
+        Ok(Some(C::to_rusqlite(&self)?))
+    }
+}
+
+impl<C: Component> BundleComponent for Option<C> {
+    const NAME: &'static str = C::NAME;
+
+    fn to_rusqlite<'a>(&'a self) -> Result<Option<rusqlite::types::ToSqlOutput<'a>>, StorageError> {
+        match self {
+            Some(c) => <C as BundleComponent>::to_rusqlite(c),
+            None => Ok(None),
+        }
     }
 }
 
 impl<C: Component> Bundle for C {
     const COMPONENTS: &'static [&'static str] = &[C::NAME];
 
-    fn to_rusqlite<'a>(
-        &'a self,
-    ) -> Result<Vec<(&'static str, rusqlite::types::ToSqlOutput<'a>)>, StorageError> {
-        Ok(vec![(C::NAME, C::to_rusqlite(&self)?)])
+    fn to_rusqlite<'a>(&'a self) -> Result<BundleData<'a>, StorageError> {
+        Ok(vec![(C::NAME, Some(C::to_rusqlite(&self)?))])
     }
+}
 
-    fn from_rusqlite<'a>(
-        components: &[(&'static str, rusqlite::types::ToSqlOutput<'a>)],
-    ) -> Result<Option<Self>, StorageError> {
-        let Some((_, value)) = components
-            .into_iter()
-            .find(|(c, _data)| *c == C::component_name())
-        else {
-            return Ok(None);
-        };
+impl<C: Component> Bundle for Option<C> {
+    const COMPONENTS: &'static [&'static str] = &[C::NAME];
 
-        Ok(Some(C::from_rusqlite(value)?))
+    fn to_rusqlite<'a>(&'a self) -> Result<BundleData<'a>, StorageError> {
+        Ok(vec![(
+            C::NAME,
+            self.as_ref().map(C::to_rusqlite).transpose()?,
+        )])
     }
 }
 
@@ -204,7 +216,7 @@ macro_rules! bundle_tuples{
     ($($ts:ident)*) => {
         impl<$($ts,)+> Bundle for ($($ts,)+)
         where
-            $($ts: Component,)+
+            $($ts: BundleComponent,)+
         {
             const COMPONENTS: &'static [&'static str] = &[
                 $($ts::NAME,)+
@@ -212,7 +224,7 @@ macro_rules! bundle_tuples{
 
             fn to_rusqlite<'a>(
                 &'a self
-            ) -> Result<Vec<(&'static str, rusqlite::types::ToSqlOutput<'a>)>, StorageError> {
+            ) -> Result<BundleData<'a>, StorageError> {
                 #[allow(non_snake_case)]
                 let ($($ts,)+) = self;
                 Ok(
@@ -221,21 +233,7 @@ macro_rules! bundle_tuples{
                     ]
                 )
             }
-
-            fn from_rusqlite<'a>(
-                components: &[(&'static str, rusqlite::types::ToSqlOutput<'a>)],
-            ) -> Result<Option<Self>, StorageError> {
-                #[allow(non_snake_case)]
-                let ($(Some($ts),)+) = (
-                    $(<$ts as Bundle>::from_rusqlite(components)?,)+
-                ) else {
-                    return Ok(None)
-                };
-
-                Ok(Some(($($ts,)+)))
-            }
         }
-
     }
 }
 

@@ -119,7 +119,10 @@ impl<'a> Entity<'a> {
 
 impl<'a> Entity<'a> {
     pub fn component<T: Component>(&self) -> Option<T> {
-        self.try_component::<T>().unwrap()
+        match self.try_component::<T>() {
+            Ok(c) => c,
+            Err(e) => panic!("Failed to get Component {}: {e}", T::NAME),
+        }
     }
 
     pub fn try_component<T: Component>(&self) -> Result<Option<T>, Error> {
@@ -242,11 +245,16 @@ impl<'a> Entity<'a> {
 
         for (component, data) in components {
             trace!(params = ?(self.id(), component, &data));
-            let attached_rows = stmt.execute(params![self.id(), component, data])?;
-            if attached_rows > 0 {
-                debug!(entity = self.id(), component, "attached");
+
+            if let Some(data) = data {
+                let attached_rows = stmt.execute(params![self.id(), component, data])?;
+                if attached_rows > 0 {
+                    debug!(entity = self.id(), component, "attached");
+                } else {
+                    debug!(entity = self.id(), component, "no-op")
+                }
             } else {
-                debug!(entity = self.id(), component, "no-op")
+                debug!(component, ?data, "skipping None");
             }
         }
 
@@ -313,11 +321,15 @@ impl<'a> NewEntity<'a> {
         for (component, data) in data {
             trace!(params = ?(eid, component, &data));
 
-            eid = Some(stmt.query_row(params![eid, component, data], |row| {
-                row.get::<_, EntityId>("entity")
-            })?);
+            if let Some(data) = data {
+                eid = Some(stmt.query_row(params![eid, component, data], |row| {
+                    row.get::<_, EntityId>("entity")
+                })?);
 
-            debug!(entity = eid.unwrap(), component, "attached");
+                debug!(entity = eid.unwrap(), component, "attached");
+            } else {
+                debug!(component, ?data, "skipping None");
+            }
         }
 
         let Some(eid) = eid else {

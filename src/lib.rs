@@ -228,12 +228,12 @@ pub struct ReadmeDoctests;
 
 #[cfg(test)]
 mod tests {
+    use crate::component::BundleComponent;
     // #[derive(Component)] derives `impl ecsdb::Component for ...`
-    use crate::Component;
     use crate::{self as ecsdb, Ecs, Entity, EntityId};
+    use crate::{Bundle, Component};
 
     use anyhow::anyhow;
-    use ecsdb_derive::Bundle;
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Serialize, Deserialize, Component)]
@@ -336,6 +336,23 @@ mod tests {
         let entity = db.new_entity().attach(bundle);
 
         assert!(entity.has::<(A, B, ComponentWithData)>());
+    }
+
+    #[test]
+    fn bundle_optionals() {
+        let db = super::Ecs::open_in_memory().unwrap();
+
+        #[derive(Debug, Bundle)]
+        struct Bundle(A, Option<B>);
+
+        let entity = db.new_entity().attach(Bundle(A, None));
+        assert!(!entity.has::<B>());
+
+        entity.attach(Bundle(A, Some(B)));
+        assert!(entity.has::<B>());
+
+        entity.attach(Bundle(A, None));
+        assert!(entity.has::<B>());
     }
 
     use super::query::*;
@@ -500,6 +517,32 @@ mod tests {
             db.find((MarkerComponent, ComponentWithData(12345))).count(),
             1
         );
+    }
+
+    #[test]
+    fn find_ranges() {
+        let db = Ecs::open_in_memory().unwrap();
+        for n in 0..100 {
+            let _ = db.new_entity().attach(ComponentWithData(n));
+        }
+
+        let mut res = db
+            .find(ComponentWithData(0)..ComponentWithData(10))
+            .map(|e| e.component::<ComponentWithData>().unwrap());
+        assert_eq!(res.next(), Some(ComponentWithData(0)));
+        assert_eq!(res.last(), Some(ComponentWithData(10)));
+
+        let mut res = db
+            .find(ComponentWithData(10)..)
+            .map(|e| e.component::<ComponentWithData>().unwrap());
+        assert_eq!(res.next(), Some(ComponentWithData(10)));
+        assert_eq!(res.last(), Some(ComponentWithData(100)));
+
+        let mut res = db
+            .find(..ComponentWithData(10))
+            .map(|e| e.component::<ComponentWithData>().unwrap());
+        assert_eq!(res.next(), Some(ComponentWithData(0)));
+        assert_eq!(res.last(), Some(ComponentWithData(10)));
     }
 
     // #[test]

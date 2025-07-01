@@ -132,7 +132,7 @@ fn derive_bundle_for_struct(name: syn::Ident, struc: syn::DataStruct) -> TokenSt
     quote! {
         impl ecsdb::component::Bundle for #name {
             const COMPONENTS: &'static [&'static str] = &[
-                #(#types::NAME),*
+                #(<#types as ecsdb::component::BundleComponent>::NAME),*
             ];
 
             fn to_rusqlite<'a>(
@@ -145,24 +145,15 @@ fn derive_bundle_for_struct(name: syn::Ident, struc: syn::DataStruct) -> TokenSt
                 Ok(vec![
                     #(
                         (
-                            <#types as ecsdb::Component>::NAME,
-                            <#types as ecsdb::Component>::Storage::to_rusqlite(#field_vars)?
+                            <#types as ecsdb::component::BundleComponent>::NAME,
+                            <#types as ecsdb::component::BundleComponent>::to_rusqlite(#field_vars)?
                         ),
                     )*
                 ])
             }
-
-            fn from_rusqlite<'a>(
-                components: ecsdb::component::BundleDataRef<'a>,
-            ) -> Result<Option<Self>, ecsdb::component::StorageError> {
-                let (#(Some(#field_vars),)*) = (#(<#types as ecsdb::Bundle>::from_rusqlite(components)?),*) else {
-                    return Ok(None);
-                };
-
-                Ok(Some(Self { #(#field_bindings,)* }))
-            }
+        }
     }
-    }.into()
+    .into()
 }
 
 fn extract_attributes(attrs: &[Attribute]) -> Attributes {

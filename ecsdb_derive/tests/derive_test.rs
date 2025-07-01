@@ -5,6 +5,17 @@ pub mod component {
     pub struct JsonStorage;
     pub struct BlobStorage;
     pub struct NullStorage;
+    impl NullStorage {
+        pub fn to_rusqlite<'a>(
+            &'a self,
+        ) -> Result<super::rusqlite::types::ToSqlOutput<'a>, StorageError> {
+            todo!()
+        }
+
+        pub fn from_rusqlite(value: &rusqlite::types::ToSqlOutput<'_>) -> Result<(), StorageError> {
+            todo!()
+        }
+    }
 
     pub trait Component {
         type Storage;
@@ -27,8 +38,10 @@ pub mod component {
         }
 
         fn to_rusqlite<'a>(&'a self) -> Result<BundleData<'a>, StorageError>;
-        fn from_rusqlite<'a>(components: BundleDataRef<'a>) -> Result<Option<Self>, StorageError>;
+        // fn from_rusqlite<'a>(components: BundleDataRef<'a>) -> Result<Option<Self>, StorageError>;
     }
+
+    pub trait ComponentWrite {}
 }
 
 pub mod resource {
