@@ -234,6 +234,66 @@ impl<C: Component> FilterValue for C {
     }
 }
 
+impl<C: FilterValue + Component> FilterValue for std::ops::Range<C> {
+    fn filter_expression(&self) -> ir::FilterExpression {
+        use rusqlite::types::ToSqlOutput;
+
+        let start = match C::to_rusqlite(&self.start).unwrap() {
+            ToSqlOutput::Borrowed(v) => v.to_owned().into(),
+            ToSqlOutput::Owned(v) => v,
+            other => unreachable!("{other:?}"),
+        };
+
+        let end = match C::to_rusqlite(&self.end).unwrap() {
+            ToSqlOutput::Borrowed(v) => v.to_owned().into(),
+            ToSqlOutput::Owned(v) => v,
+            other => unreachable!("{other:?}"),
+        };
+
+        ir::FilterExpression::WithComponentDataRange {
+            component: C::component_name().to_owned(),
+            start,
+            end,
+        }
+    }
+}
+
+impl<C: FilterValue + Component> FilterValue for std::ops::RangeTo<C> {
+    fn filter_expression(&self) -> ir::FilterExpression {
+        use rusqlite::types::ToSqlOutput;
+
+        let end = match C::to_rusqlite(&self.end).unwrap() {
+            ToSqlOutput::Borrowed(v) => v.to_owned().into(),
+            ToSqlOutput::Owned(v) => v,
+            other => unreachable!("{other:?}"),
+        };
+
+        ir::FilterExpression::WithComponentDataRange {
+            component: C::component_name().to_owned(),
+            start: rusqlite::types::Value::Null,
+            end,
+        }
+    }
+}
+
+impl<C: FilterValue + Component> FilterValue for std::ops::RangeFrom<C> {
+    fn filter_expression(&self) -> ir::FilterExpression {
+        use rusqlite::types::ToSqlOutput;
+
+        let start = match C::to_rusqlite(&self.start).unwrap() {
+            ToSqlOutput::Borrowed(v) => v.to_owned().into(),
+            ToSqlOutput::Owned(v) => v,
+            other => unreachable!("{other:?}"),
+        };
+
+        ir::FilterExpression::WithComponentDataRange {
+            component: C::component_name().to_owned(),
+            start,
+            end: rusqlite::types::Value::Null,
+        }
+    }
+}
+
 mod tuples {
     use super::*;
 

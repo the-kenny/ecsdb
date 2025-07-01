@@ -45,6 +45,11 @@ pub enum FilterExpression {
     WithoutComponent(String),
 
     WithComponentData(String, rusqlite::types::Value),
+    WithComponentDataRange {
+        component: String,
+        start: rusqlite::types::Value,
+        end: rusqlite::types::Value,
+    },
 }
 
 impl FilterExpression {
@@ -151,6 +156,43 @@ impl FilterExpression {
                             ("?2", Box::new(data.to_owned()) as _),
                         ],
                     )
+                }
+            }
+
+            FilterExpression::WithComponentDataRange {
+                component,
+                start,
+                end,
+            } => {
+                use rusqlite::types::Value;
+                match (start, end) {
+                    (Value::Null, Value::Null) => SqlFragment::new(
+                        "entity in (select entity from components where component = ?1 and data is null)",
+                        [("?1", Box::new(component.to_owned()) as _)]
+                    ),
+                    (Value::Null, end) =>  SqlFragment::new(
+                            "entity in (select entity from components where component = ?1 and data <= ?2)",
+                            [
+                                ("?1", Box::new(component.to_owned()) as _),
+                                ("?2", Box::new(end.to_owned()) as _),
+                            ],
+                        ),
+                    (start, Value::Null) =>  SqlFragment::new(
+                            "entity in (select entity from components where component = ?1 and data >= ?2)",
+                            [
+                                ("?1", Box::new(component.to_owned()) as _),
+                                ("?2", Box::new(start.to_owned()) as _),
+                            ],
+                        ),
+
+                    (start, end) =>  SqlFragment::new(
+                            "entity in (select entity from components where component = ?1 and data between ?2 and ?3)",
+                            [
+                                ("?1", Box::new(component.to_owned()) as _),
+                                ("?2", Box::new(start.to_owned()) as _),
+                                ("?3", Box::new(end.to_owned()) as _),
+                            ],
+                        ),
                 }
             }
 
