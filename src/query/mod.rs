@@ -221,6 +221,12 @@ impl<F: FilterValue> QueryFilter for FilterValueWrapper<F> {
     }
 }
 
+impl<F: FilterValue> From<F> for FilterValueWrapper<F> {
+    fn from(value: F) -> Self {
+        Self(value)
+    }
+}
+
 impl FilterValue for EntityId {
     fn filter_expression(&self) -> ir::FilterExpression {
         ir::FilterExpression::entity(*self)

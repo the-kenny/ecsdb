@@ -1,7 +1,11 @@
 use rusqlite::{params, OptionalExtension};
 use tracing::{debug, trace};
 
-use crate::{component::Bundle, query, Component, DynComponent, Ecs, EntityId, Error, LastUpdated};
+use crate::{
+    component::Bundle,
+    query::{self, FilterValueWrapper},
+    Component, DynComponent, Ecs, EntityId, Error, LastUpdated,
+};
 
 #[derive(Debug, Copy, Clone)]
 pub struct WithoutEntityId;
@@ -203,7 +207,10 @@ pub enum ModifyComponentError {
 
 impl<'a> Entity<'a> {
     pub fn try_matches<D: query::QueryFilter + Default>(&self) -> Result<bool, Error> {
-        let q = query::Query::<(), D>::new(self.db(), D::default());
+        let q = query::Query::<(), (FilterValueWrapper<EntityId>, _)>::new(
+            self.db(),
+            (self.id().into(), D::default()),
+        );
         Ok(q.try_iter()?.next().is_some())
     }
 
