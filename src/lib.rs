@@ -19,6 +19,8 @@ pub mod query;
 pub mod resource;
 pub use resource::*;
 
+pub mod sqlite_ext;
+
 pub mod system;
 
 pub mod rusqlite {
@@ -63,6 +65,9 @@ impl Ecs {
         conn.pragma_update(None, "journal_mode", "wal")?;
         conn.execute_batch(include_str!("schema.sql"))?;
         conn.set_transaction_behavior(::rusqlite::TransactionBehavior::Immediate);
+
+        sqlite_ext::add_regexp_function(&mut conn)?;
+
         Ok(Self {
             conn,
             systems: Default::default(),
@@ -228,7 +233,6 @@ pub struct ReadmeDoctests;
 
 #[cfg(test)]
 mod tests {
-    use crate::component::BundleComponent;
     // #[derive(Component)] derives `impl ecsdb::Component for ...`
     use crate::{self as ecsdb, Ecs, Entity, EntityId};
     use crate::{Bundle, Component};
@@ -283,7 +287,6 @@ mod tests {
 
     #[test]
     fn component_overwrites() {
-        tracing_subscriber::fmt::init();
         let db = super::Ecs::open_in_memory().unwrap();
 
         let entity = db
@@ -536,7 +539,7 @@ mod tests {
             .find(ComponentWithData(10)..)
             .map(|e| e.component::<ComponentWithData>().unwrap());
         assert_eq!(res.next(), Some(ComponentWithData(10)));
-        assert_eq!(res.last(), Some(ComponentWithData(100)));
+        assert_eq!(res.last(), Some(ComponentWithData(99)));
 
         let mut res = db
             .find(..ComponentWithData(10))

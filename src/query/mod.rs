@@ -1,3 +1,5 @@
+use tracing::trace;
+
 use crate::{component::Bundle, Entity, EntityId};
 
 use super::Component;
@@ -78,6 +80,7 @@ where
 
     pub fn try_entities(&self) -> Result<impl Iterator<Item = Entity<'a>> + 'a, crate::Error> {
         let mut query = self.as_sql_query();
+
         query.order_by = ir::OrderBy::Asc;
         self.ecs.fetch::<Entity>(query)
     }
@@ -90,9 +93,13 @@ where
         self.ecs.fetch::<Entity>(query)
     }
 
+    #[tracing::instrument(level = "debug", skip_all)]
     fn as_sql_query(&self) -> ir::Query {
         let filter =
             ir::FilterExpression::and([D::filter_expression(), self.filter.filter_expression()]);
+
+        trace!(?filter);
+
         ir::Query {
             filter,
             order_by: ir::OrderBy::Asc,

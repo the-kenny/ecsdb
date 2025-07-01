@@ -165,35 +165,37 @@ impl FilterExpression {
                 end,
             } => {
                 use rusqlite::types::Value;
-                match (start, end) {
-                    (Value::Null, Value::Null) => SqlFragment::new(
-                        "entity in (select entity from components where component = ?1 and data is null)",
-                        [("?1", Box::new(component.to_owned()) as _)]
+
+                let (range_filter_condition, mut params) = match (start, end) {
+                    (Value::Null, Value::Null) => (
+                        "data is null",
+                        vec![]
                     ),
-                    (Value::Null, end) =>  SqlFragment::new(
-                            "entity in (select entity from components where component = ?1 and data <= ?2)",
-                            [
-                                ("?1", Box::new(component.to_owned()) as _),
+                    (Value::Null, end) =>  (
+                            "velodb_extract_data(data) <= velodb_extract_data(?2)",
+                            vec![
                                 ("?2", Box::new(end.to_owned()) as _),
                             ],
                         ),
-                    (start, Value::Null) =>  SqlFragment::new(
-                            "entity in (select entity from components where component = ?1 and data >= ?2)",
-                            [
-                                ("?1", Box::new(component.to_owned()) as _),
+                    (start, Value::Null) =>  (
+                            "velodb_extract_data(data) >= velodb_extract_data(?2)",
+                            vec![
                                 ("?2", Box::new(start.to_owned()) as _),
                             ],
                         ),
 
-                    (start, end) =>  SqlFragment::new(
-                            "entity in (select entity from components where component = ?1 and data between ?2 and ?3)",
-                            [
-                                ("?1", Box::new(component.to_owned()) as _),
+                    (start, end) =>  (
+                            "velodb_extract_data(data) between velodb_extract_data(?2) and velodb_extract_data(?3)",
+                            vec![
                                 ("?2", Box::new(start.to_owned()) as _),
                                 ("?3", Box::new(end.to_owned()) as _),
                             ],
                         ),
-                }
+                };
+
+                let sql = format!("entity in (select entity from components where component = ?component and {range_filter_condition})");
+                params.push(("?component", Box::new(component.to_owned()) as _));
+                SqlFragment::new(&sql, params)
             }
 
             FilterExpression::And(exprs) => Self::combine_exprs("and", exprs),
@@ -208,9 +210,11 @@ impl FilterExpression {
             return FilterExpression::None.where_clause();
         };
 
-        let mut n = 0;
+        let mut last_placeholder = 0;
+
         let mut rename_fn = |_old| {
-            n += 1;
+            last_placeholder += 1;
+            let n = last_placeholder;
             format!(":{n}")
         };
 
