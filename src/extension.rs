@@ -71,7 +71,6 @@ mod test {
             assert_eq!(test.0, 1234);
         }
 
-        ecs.register(sys);
-        ecs.tick();
+        ecs.run(sys).unwrap();
     }
 }

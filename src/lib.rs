@@ -48,7 +48,6 @@ pub enum Error {
 
 pub struct Ecs {
     conn: rusqlite::Connection,
-    systems: Vec<Box<dyn system::System>>,
     extensions: anymap::Map<dyn anymap::any::Any + Send>,
 }
 
@@ -70,7 +69,6 @@ impl Ecs {
 
         Ok(Self {
             conn,
-            systems: Default::default(),
             extensions: anymap::Map::new(),
         })
     }

@@ -99,9 +99,7 @@ fn log_system(entities: Query<(EntityId, Date, Marker), Without<State>>) {
     }
 }
 
-ecs.register(process_marked_system);
-ecs.register(log_system);
-
-ecs.tick();
+ecs.run(process_marked_system)?;
+ecs.run(log_system)?;
 
 ```

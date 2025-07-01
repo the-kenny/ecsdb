@@ -4,10 +4,7 @@ use tracing::{debug, error};
 use crate::{self as ecsdb, query, Component, Ecs, Entity};
 
 use core::marker::PhantomData;
-use std::{
-    borrow::{Borrow, Cow},
-    collections::HashMap,
-};
+use std::borrow::{Borrow, Cow};
 
 #[derive(Serialize, Deserialize, Component, Debug, PartialEq, Eq, Hash)]
 pub struct Name(pub String);
@@ -86,7 +83,6 @@ where
 {
     type Param = ();
     fn run(&self, _app: ()) -> Result<(), anyhow::Error> {
-        eprintln!("calling a function with no params");
         self().into_result()
     }
 }
@@ -146,40 +142,32 @@ impl SystemParam for () {
 }
 
 impl Ecs {
-    pub fn tick(&self) {
-        let mut system_entities: HashMap<_, _> = self.system_entities().collect();
+    pub fn run<F: IntoSystem<Params>, Params: SystemParam>(
+        &self,
+        system: F,
+    ) -> Result<(), anyhow::Error> {
+        let system = system.into_system();
 
-        for system in &self.systems {
-            let _span = tracing::info_span!("system", name = system.name().as_ref()).entered();
-            let started = std::time::Instant::now();
+        let _span = tracing::info_span!("system", name = system.name().as_ref()).entered();
 
-            let entity = system_entities
-                .entry(system.name().into_owned())
-                .or_insert_with(|| self.new_entity().attach(Name(system.name().to_string())));
+        let started = std::time::Instant::now();
 
-            debug!("Running");
+        let system_entity = self
+            .system_entity(&system.name())
+            .unwrap_or_else(|| self.new_entity().attach(Name(system.name().to_string())));
 
-            if let Err(e) = system.run(&self) {
-                error!(?e);
-            }
+        debug!("Running");
 
-            entity.attach(LastRun(chrono::Utc::now()));
-
-            debug!(elapsed_ms = started.elapsed().as_millis(), "Finished",);
+        if let Err(e) = system.run(&self) {
+            error!(?e);
+            return Err(e);
         }
-    }
 
-    pub fn register<F: IntoSystem<Params>, Params: SystemParam>(&mut self, system: F) {
-        let system = Box::new(system.into_system());
+        system_entity.attach(LastRun(chrono::Utc::now()));
 
-        self.systems.push(system);
-    }
+        debug!(elapsed_ms = started.elapsed().as_millis(), "Finished",);
 
-    pub fn system<'a>(&'a self, name: &str) -> Option<&'a dyn System> {
-        self.systems
-            .iter()
-            .find(|s| s.name() == name)
-            .map(|s| s.as_ref())
+        Ok(())
     }
 
     pub fn system_entities<'a>(&'a self) -> impl Iterator<Item = (String, Entity<'a>)> {
@@ -252,30 +240,32 @@ mod tests {
 
     #[test]
     fn no_param() {
-        let mut ecs = Ecs::open_in_memory().unwrap();
-        ecs.register(|| ());
+        let ecs = Ecs::open_in_memory().unwrap();
+        ecs.run(|| ()).unwrap();
     }
 
     #[test]
     fn ecs_param() {
-        let mut ecs = Ecs::open_in_memory().unwrap();
-        ecs.register(|_ecs: &Ecs| ());
+        let ecs = Ecs::open_in_memory().unwrap();
+        ecs.run(|_ecs: &Ecs| ()).unwrap();
+        // ecs.run(|_ecs: &Ecs| ());
     }
 
     #[test]
     fn query_param() {
-        let mut ecs = Ecs::open_in_memory().unwrap();
-        ecs.register(|_q: query::Query<()>| ());
+        let ecs = Ecs::open_in_memory().unwrap();
+        ecs.run(|_q: query::Query<()>| ()).unwrap();
     }
 
     #[test]
     fn multiple_params() {
-        let mut ecs = Ecs::open_in_memory().unwrap();
-        ecs.register(|_ecs: &Ecs, _q: query::Query<()>| ());
-        ecs.register(|_: &Ecs, _: &Ecs| ());
-        ecs.register(|_: &Ecs, _: &Ecs, _: &Ecs| ());
-        ecs.register(|_: &Ecs, _: &Ecs, _: &Ecs, _: &Ecs| ());
-        ecs.register(|_: &Ecs, _: &Ecs, _: &Ecs, _: &Ecs, _: &Ecs| ());
+        let ecs = Ecs::open_in_memory().unwrap();
+        ecs.run(|_ecs: &Ecs, _q: query::Query<()>| ()).unwrap();
+        ecs.run(|_: &Ecs, _: &Ecs| ()).unwrap();
+        ecs.run(|_: &Ecs, _: &Ecs, _: &Ecs| ()).unwrap();
+        ecs.run(|_: &Ecs, _: &Ecs, _: &Ecs, _: &Ecs| ()).unwrap();
+        ecs.run(|_: &Ecs, _: &Ecs, _: &Ecs, _: &Ecs, _: &Ecs| ())
+            .unwrap();
     }
 
     use crate as ecsdb;
@@ -293,39 +283,39 @@ mod tests {
 
     #[test]
     fn run_query() {
-        let mut db = Ecs::open_in_memory().unwrap();
+        let db = Ecs::open_in_memory().unwrap();
         fn system(query: query::Query<Entity, With<(A, B)>>) {
             for entity in query.try_iter().unwrap() {
                 entity.attach(Seen);
             }
         }
 
-        db.register(system);
+        // db.register(system);
 
         let a_and_b = db.new_entity().attach(A).attach(B);
         let a = db.new_entity().attach(A);
 
-        db.tick();
+        db.run(system).unwrap();
+
         assert!(a_and_b.component::<Seen>().is_some());
         assert!(a.component::<Seen>().is_none());
     }
 
     #[test]
     fn run_ecs() {
-        let mut db = Ecs::open_in_memory().unwrap();
+        let db = Ecs::open_in_memory().unwrap();
         fn system(ecs: &Ecs) {
             ecs.new_entity().attach(Seen);
         }
 
-        db.register(system);
-        db.tick();
+        db.run(system).unwrap();
 
         assert!(db.query::<Seen>().next().is_some());
     }
 
     #[test]
     fn system_entity_param() {
-        let mut db = Ecs::open_in_memory().unwrap();
+        let db = Ecs::open_in_memory().unwrap();
         fn system(ecs: &Ecs, system: SystemEntity<'_>) {
             assert_eq!(
                 system
@@ -339,8 +329,7 @@ mod tests {
             ecs.new_entity().attach(Seen);
         }
 
-        db.register(system);
-        db.tick();
+        db.run(system).unwrap();
 
         assert!(db.query::<Seen>().next().is_some());
     }
