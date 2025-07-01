@@ -4,7 +4,10 @@ use tracing::{debug, error};
 use crate::{self as ecsdb, query, Component, Ecs, Entity};
 
 use core::marker::PhantomData;
-use std::{borrow::Cow, collections::HashMap};
+use std::{
+    borrow::{Borrow, Cow},
+    collections::HashMap,
+};
 
 #[derive(Serialize, Deserialize, Component, Debug, PartialEq, Eq, Hash)]
 pub struct Name(pub String);
@@ -340,5 +343,17 @@ mod tests {
         db.tick();
 
         assert!(db.query::<Seen>().next().is_some());
+    }
+}
+
+impl AsRef<chrono::DateTime<chrono::Utc>> for LastRun {
+    fn as_ref(&self) -> &chrono::DateTime<chrono::Utc> {
+        &self.0
+    }
+}
+
+impl Borrow<chrono::DateTime<chrono::Utc>> for LastRun {
+    fn borrow(&self) -> &chrono::DateTime<chrono::Utc> {
+        &self.0
     }
 }
