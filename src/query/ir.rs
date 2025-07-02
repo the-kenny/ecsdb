@@ -21,7 +21,7 @@ pub struct Query {
 
 impl Query {
     pub fn into_sql(self) -> (String, Vec<(String, Box<dyn ToSql>)>) {
-        let mut select = self.filter.sql_query();
+        let mut select = self.filter.simplify().sql_query();
         let order_by = match self.order_by {
             OrderBy::Asc => "order by entity asc",
             OrderBy::Desc => "order by entity desc",
@@ -88,18 +88,28 @@ impl FilterExpression {
 
         match self {
             Or(exprs) => {
-                let exprs: Vec<_> = exprs
+                let exprs = exprs
                     .into_iter()
                     .filter(|e| *e != None)
+                    // Flatten nested `Or`
+                    .flat_map(|e| match e {
+                        Or(exprs) => exprs,
+                        other => vec![other],
+                    })
                     .map(Self::simplify)
                     .collect();
 
                 Or(exprs)
             }
             And(exprs) => {
-                let exprs: Vec<_> = exprs
+                let exprs = exprs
                     .into_iter()
                     .filter(|e| *e != None)
+                    // Flatten nested `And`
+                    .flat_map(|e| match e {
+                        And(exprs) => exprs,
+                        other => vec![other],
+                    })
                     .map(Self::simplify)
                     .collect();
                 And(exprs)
@@ -346,7 +356,39 @@ mod test {
                     FilterExpression::without_component("ecsdb::Bar"),
                 ]),
             ]),
+            FilterExpression::and([
+                FilterExpression::and([
+                    FilterExpression::entity(42),
+                    FilterExpression::with_component("ecsdb::Test"),
+                ]),
+                FilterExpression::and([
+                    FilterExpression::entity(23),
+                    FilterExpression::with_component("ecsdb::Foo"),
+                    FilterExpression::without_component("ecsdb::Bar"),
+                ]),
+            ]),
+            FilterExpression::or([
+                FilterExpression::or([
+                    FilterExpression::entity(42),
+                    FilterExpression::with_component("ecsdb::Test"),
+                ]),
+                FilterExpression::and([
+                    FilterExpression::entity(23),
+                    FilterExpression::with_component("ecsdb::Foo"),
+                    FilterExpression::without_component("ecsdb::Bar"),
+                ]),
+            ]),
         ]
+    }
+
+    #[test]
+    fn simplify() {
+        for case in cases() {
+            let expr = format!("{case:?}.simplify()");
+            insta::with_settings!({omit_expression => true, description => &expr, snapshot_suffix => &expr}, {
+                assert_debug_snapshot!(case.simplify());
+            });
+        }
     }
 
     #[test]

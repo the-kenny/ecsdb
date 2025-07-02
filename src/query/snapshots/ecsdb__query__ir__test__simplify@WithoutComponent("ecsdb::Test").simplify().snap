@@ -1,0 +1,7 @@
+---
+source: src/query/ir.rs
+description: "WithoutComponent(\"ecsdb::Test\").simplify()"
+---
+WithoutComponent(
+    "ecsdb::Test",
+)

@@ -1,0 +1,14 @@
+---
+source: src/query/ir.rs
+description: "Or([WithComponent(\"ecsdb::Test\"), EntityId(42)]).simplify()"
+---
+Or(
+    [
+        WithComponent(
+            "ecsdb::Test",
+        ),
+        EntityId(
+            42,
+        ),
+    ],
+)

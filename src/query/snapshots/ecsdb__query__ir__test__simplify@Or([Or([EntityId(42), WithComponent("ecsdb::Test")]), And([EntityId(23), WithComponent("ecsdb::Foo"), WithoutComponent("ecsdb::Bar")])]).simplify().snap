@@ -1,0 +1,27 @@
+---
+source: src/query/ir.rs
+description: "Or([Or([EntityId(42), WithComponent(\"ecsdb::Test\")]), And([EntityId(23), WithComponent(\"ecsdb::Foo\"), WithoutComponent(\"ecsdb::Bar\")])]).simplify()"
+---
+Or(
+    [
+        EntityId(
+            42,
+        ),
+        WithComponent(
+            "ecsdb::Test",
+        ),
+        And(
+            [
+                EntityId(
+                    23,
+                ),
+                WithComponent(
+                    "ecsdb::Foo",
+                ),
+                WithoutComponent(
+                    "ecsdb::Bar",
+                ),
+            ],
+        ),
+    ],
+)

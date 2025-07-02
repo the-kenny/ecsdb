@@ -1,0 +1,7 @@
+---
+source: src/query/ir.rs
+description: EntityId(42).simplify()
+---
+EntityId(
+    42,
+)
