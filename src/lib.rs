@@ -19,6 +19,8 @@ pub mod query;
 pub mod resource;
 pub use resource::*;
 
+pub mod schedule;
+
 pub mod sqlite_ext;
 
 pub mod system;
