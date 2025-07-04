@@ -1,0 +1,14 @@
+---
+source: src/query/ir.rs
+description: "And([EntityId(42), WithComponent(\"ecsdb::Test\"), EntityId(42)]).simplify()"
+---
+And(
+    [
+        EntityId(
+            42,
+        ),
+        WithComponent(
+            "ecsdb::Test",
+        ),
+    ],
+)
