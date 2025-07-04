@@ -20,6 +20,21 @@ group by
 order by
     component asc;
 
+-- Set ecsdb::CreatedAt on initial insert
+create trigger if not exists components_created_insert_trigger
+after insert on components
+for each row
+when new.component != 'ecsdb::CreatedAt' begin
+insert into
+    components (entity, component, data)
+values
+    (
+        new.entity,
+        'ecsdb::CreatedAt',
+        json_quote (strftime ('%Y-%m-%dT%H:%M:%fZ'))
+    ) on conflict do nothing;
+end;
+
 -- Update ecsdb::LastUpdated on update
 create trigger if not exists components_last_modified_update_trigger after
 update on components for each row when new.component != 'ecsdb::LastUpdated' begin
@@ -34,7 +49,6 @@ values
 update
 set
     data = excluded.data;
-
 end;
 
 -- Update ecsdb::LastUpdated on insert
@@ -50,7 +64,6 @@ values
 update
 set
     data = excluded.data;
-
 end;
 
 -- Update ecsdb::LastUpdated on delete, except when it's the last component
@@ -92,7 +105,6 @@ delete from components
 where
     entity = old.entity
     and component = 'ecsdb::LastUpdated';
-
 end;
 
 -- Resources

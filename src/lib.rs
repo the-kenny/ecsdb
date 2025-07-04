@@ -170,6 +170,9 @@ impl Ecs {
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct CreatedAt(pub chrono::DateTime<chrono::Utc>);
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct LastUpdated(pub chrono::DateTime<chrono::Utc>);
 
 impl Ecs {
@@ -203,6 +206,29 @@ impl Ecs {
     }
 }
 
+impl Ecs {
+    pub fn raw_sql<'a>(&'a self) -> &'a rusqlite::Connection {
+        &self.conn
+    }
+}
+
+impl AsRef<chrono::DateTime<chrono::Utc>> for CreatedAt {
+    fn as_ref(&self) -> &chrono::DateTime<chrono::Utc> {
+        &self.0
+    }
+}
+
+impl Component for CreatedAt {
+    type Storage = component::JsonStorage;
+    const NAME: &'static str = "ecsdb::Created";
+}
+
+impl Default for CreatedAt {
+    fn default() -> Self {
+        Self(chrono::DateTime::<chrono::Utc>::MIN_UTC)
+    }
+}
+
 impl AsRef<chrono::DateTime<chrono::Utc>> for LastUpdated {
     fn as_ref(&self) -> &chrono::DateTime<chrono::Utc> {
         &self.0
@@ -217,11 +243,6 @@ impl Component for LastUpdated {
 impl Default for LastUpdated {
     fn default() -> Self {
         Self(chrono::DateTime::<chrono::Utc>::MIN_UTC)
-    }
-}
-impl Ecs {
-    pub fn raw_sql<'a>(&'a self) -> &'a rusqlite::Connection {
-        &self.conn
     }
 }
 
@@ -694,6 +715,26 @@ mod tests {
 
         e.attach(B);
         assert!(e.last_modified() > old);
+    }
+
+    #[test]
+    fn created() {
+        #[derive(Serialize, Deserialize, Component)]
+        struct A;
+        #[derive(Serialize, Deserialize, Component)]
+        struct B;
+
+        let db = super::Ecs::open_in_memory().unwrap();
+        let e = db.new_entity().attach(A);
+
+        assert!(e.created_at() > chrono::Utc::now() - chrono::Duration::minutes(1));
+
+        let old = e.created_at();
+
+        std::thread::sleep(std::time::Duration::from_millis(2));
+
+        e.attach(B);
+        assert_eq!(e.created_at(), old);
     }
 
     #[test]

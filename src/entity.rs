@@ -4,7 +4,7 @@ use tracing::{debug, trace};
 use crate::{
     component::Bundle,
     query::{self, FilterValueWrapper},
-    Component, DynComponent, Ecs, EntityId, Error, LastUpdated,
+    Component, CreatedAt, DynComponent, Ecs, EntityId, Error, LastUpdated,
 };
 
 #[derive(Debug, Copy, Clone)]
@@ -53,6 +53,18 @@ impl<'a> Entity<'a> {
             .optional()
             .map(|o| o.is_some())
             .map_err(Error::from)
+    }
+
+    pub fn created_at(&self) -> chrono::DateTime<chrono::Utc> {
+        self.try_created_at().expect("Non-Error")
+    }
+
+    #[tracing::instrument(name = "created_at", level = "debug")]
+    pub fn try_created_at(&self) -> Result<chrono::DateTime<chrono::Utc>, Error> {
+        // self.0.try_last_modified(self.id()).map_err(Error::from)
+        self.try_component()
+            .map(Option::unwrap_or_default)
+            .map(|CreatedAt(lu)| lu)
     }
 
     pub fn last_modified(&self) -> chrono::DateTime<chrono::Utc> {
