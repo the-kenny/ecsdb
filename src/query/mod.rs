@@ -17,9 +17,16 @@ pub trait QueryFilter {
     fn filter_expression(&self) -> ir::FilterExpression;
 }
 
+/// Matches if any of the Filters in `C` matches
 pub struct AnyOf<C>(PhantomData<C>);
+
+/// Matches if Entity has all components in `C`
 pub struct With<C>(PhantomData<C>);
+
+/// Matches if Entity has none of the components in `C`
 pub struct Without<C>(PhantomData<C>);
+
+/// Matches if any of the filters in `F` match
 pub struct Or<F>(F);
 
 pub trait FilterValue: Sized {
