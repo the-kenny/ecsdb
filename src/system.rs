@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 use crate::{self as ecsdb, query, Component, Ecs, Entity};
 
@@ -146,8 +146,20 @@ impl Ecs {
         &self,
         system: F,
     ) -> Result<(), anyhow::Error> {
-        let system = system.into_system();
+        self.run_system_internal(&system.into_system())
+    }
 
+    pub fn system_entities<'a>(&'a self) -> impl Iterator<Item = (String, Entity<'a>)> {
+        self.query::<(Entity, Name)>().map(|(e, name)| (name.0, e))
+    }
+
+    pub fn system_entity<'a>(&'a self, name: &str) -> Option<Entity<'a>> {
+        self.query::<(Entity, Name)>()
+            .find_map(|(e, s)| (s.0 == name).then_some(e))
+    }
+
+    #[tracing::instrument(name = "run", level="info", skip_all, fields(system = %system.name()))]
+    fn run_system_internal(&self, system: &dyn System) -> Result<(), anyhow::Error> {
         let _span = tracing::info_span!("system", name = system.name().as_ref()).entered();
 
         let started = std::time::Instant::now();
@@ -156,7 +168,7 @@ impl Ecs {
             .system_entity(&system.name())
             .unwrap_or_else(|| self.new_entity().attach(Name(system.name().to_string())));
 
-        debug!("Running");
+        info!("Running");
 
         if let Err(e) = system.run(&self) {
             error!(?e);
@@ -168,15 +180,6 @@ impl Ecs {
         debug!(elapsed_ms = started.elapsed().as_millis(), "Finished",);
 
         Ok(())
-    }
-
-    pub fn system_entities<'a>(&'a self) -> impl Iterator<Item = (String, Entity<'a>)> {
-        self.query::<(Entity, Name)>().map(|(e, name)| (name.0, e))
-    }
-
-    pub fn system_entity<'a>(&'a self, name: &str) -> Option<Entity<'a>> {
-        self.query::<(Entity, Name)>()
-            .find_map(|(e, s)| (s.0 == name).then_some(e))
     }
 }
 
