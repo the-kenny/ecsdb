@@ -61,7 +61,6 @@ impl<'a> Entity<'a> {
 
     #[tracing::instrument(name = "created_at", level = "debug")]
     pub fn try_created_at(&self) -> Result<chrono::DateTime<chrono::Utc>, Error> {
-        // self.0.try_last_modified(self.id()).map_err(Error::from)
         self.try_component()
             .map(Option::unwrap_or_default)
             .map(|CreatedAt(lu)| lu)
@@ -73,7 +72,6 @@ impl<'a> Entity<'a> {
 
     #[tracing::instrument(name = "last_modified", level = "debug")]
     pub fn try_last_modified(&self) -> Result<chrono::DateTime<chrono::Utc>, Error> {
-        // self.0.try_last_modified(self.id()).map_err(Error::from)
         self.try_component()
             .map(Option::unwrap_or_default)
             .map(|LastUpdated(lu)| lu)

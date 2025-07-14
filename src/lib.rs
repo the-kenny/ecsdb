@@ -220,7 +220,7 @@ impl AsRef<chrono::DateTime<chrono::Utc>> for CreatedAt {
 
 impl Component for CreatedAt {
     type Storage = component::JsonStorage;
-    const NAME: &'static str = "ecsdb::Created";
+    const NAME: &'static str = "ecsdb::CreatedAt";
 }
 
 impl Default for CreatedAt {
@@ -253,7 +253,7 @@ pub struct ReadmeDoctests;
 #[cfg(test)]
 mod tests {
     // #[derive(Component)] derives `impl ecsdb::Component for ...`
-    use crate::{self as ecsdb, Ecs, Entity, EntityId};
+    use crate::{self as ecsdb, CreatedAt, Ecs, Entity, EntityId};
     use crate::{Bundle, Component};
 
     use anyhow::anyhow;
@@ -727,7 +727,10 @@ mod tests {
         let db = super::Ecs::open_in_memory().unwrap();
         let e = db.new_entity().attach(A);
 
-        assert!(e.created_at() > chrono::Utc::now() - chrono::Duration::minutes(1));
+        assert!(e.has::<CreatedAt>());
+        assert_ne!(e.created_at(), chrono::DateTime::<chrono::Utc>::MIN_UTC);
+
+        assert!(e.created_at() > chrono::Utc::now() - chrono::Duration::minutes(1),);
 
         let old = e.created_at();
 
