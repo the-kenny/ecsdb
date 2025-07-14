@@ -2,6 +2,7 @@ use tracing::warn;
 
 use crate::{component, Component};
 
+#[derive(Debug)]
 pub struct DynComponent<'a>(
     pub(crate) &'a str,
     pub(crate) rusqlite::types::ToSqlOutput<'a>,
