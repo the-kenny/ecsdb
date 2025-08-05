@@ -95,7 +95,7 @@ fn process_marked_system(marked_entities: Query<Entity, (With<Marker>, Without<S
 // `State`
 fn log_system(entities: Query<(EntityId, Date, Marker), Without<State>>) {
     for (entity_id, Date(date), _marker) in entities.iter() {
-        println("{entity_id} {date}");
+        println!("{entity_id} {date}");
     }
 }
 
