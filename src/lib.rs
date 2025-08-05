@@ -27,6 +27,7 @@ pub mod rusqlite {
     pub use rusqlite::*;
 }
 
+use self_cell::MutBorrow;
 use serde::{Deserialize, Serialize};
 pub use system::*;
 
@@ -184,25 +185,50 @@ impl Ecs {
         let (sql, placeholders) = sql_query.into_sql();
         debug!(sql);
 
-        let rows = {
-            let mut stmt = self.conn.prepare(&sql)?;
-            let params: Box<[(&str, &dyn rusqlite::ToSql)]> = placeholders
-                .iter()
-                .map(|(p, v)| (p.as_str(), v.as_ref()))
-                .collect();
+        type RowsRef<'a> = ::rusqlite::Rows<'a>;
 
-            let rows = stmt
-                .query_map(&params[..], |row| row.get::<_, EntityId>("entity"))?
-                .map(|r| r.expect("Valid EntityId"));
-            rows.collect::<Vec<_>>()
-        };
+        self_cell::self_cell!(
+            struct OwningRows<'conn> {
+                owner: self_cell::MutBorrow<::rusqlite::Statement<'conn>>,
+                #[covariant]
+                dependent: RowsRef,
+            }
+        );
 
-        debug!(count = rows.len());
+        impl<'conn> Iterator for OwningRows<'conn> {
+            type Item = Result<EntityId, rusqlite::Error>;
+            fn next(&mut self) -> Option<Self::Item> {
+                match self.with_dependent_mut(|_stmt, rows| rows.next()) {
+                    Ok(Some(row)) => Some(row.get("entity")),
+                    Ok(None) => None,
+                    Err(e) => Some(Err(e)),
+                }
+            }
+        }
 
-        Ok(rows
-            .into_iter()
+        let stmt = self.conn.prepare(&sql)?;
+        let params: Box<[(&str, &dyn rusqlite::ToSql)]> = placeholders
+            .iter()
+            .map(|(p, v)| (p.as_str(), v.as_ref()))
+            .collect();
+
+        let owning_rows =
+            OwningRows::try_new(MutBorrow::new(stmt), |s| s.borrow_mut().query(&params[..]))
+                .unwrap();
+
+        let rows = owning_rows
+            .map(|result| result.expect("EntityId from Row"))
             .scan(self, |ecs, eid| Some(Entity::with_id(&ecs, eid)))
-            .map(|e| Q::from_entity(e).unwrap())) // TODO: unwrap()
+            .map(|e| {
+                debug!(
+                    data = std::any::type_name::<Q>(),
+                    entity = ?e,
+                    "Fetching QueryData"
+                );
+                Q::from_entity(e).unwrap()
+            });
+
+        Ok(rows)
     }
 }
 
