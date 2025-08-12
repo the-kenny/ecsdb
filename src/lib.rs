@@ -177,11 +177,73 @@ pub struct CreatedAt(pub chrono::DateTime<chrono::Utc>);
 pub struct LastUpdated(pub chrono::DateTime<chrono::Utc>);
 
 impl Ecs {
-    #[instrument(name = "fetch", level = "debug", skip_all)]
+    #[instrument(level = "debug", skip_all)]
     fn fetch<'a, Q: query::QueryData + 'a>(
         &'a self,
         sql_query: query::ir::Query,
     ) -> Result<impl Iterator<Item = Q::Output<'a>> + 'a, Error> {
+        let entity_ids = self.fetch_entity_ids(sql_query)?;
+
+        let rows = entity_ids
+            .into_iter()
+            .scan(self, |ecs, eid| Some(Entity::with_id(&ecs, eid)))
+            .map(|e| {
+                debug!(
+                    data = std::any::type_name::<Q>(),
+                    entity = ?e,
+                    "Fetching QueryData"
+                );
+                Q::from_entity(e).unwrap()
+            });
+
+        Ok(rows)
+    }
+
+    fn fetch_entity_ids<'a>(&'a self, sql_query: query::ir::Query) -> Result<Vec<EntityId>, Error> {
+        let (sql, placeholders) = sql_query.into_sql();
+        debug!(sql);
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let params: Box<[(&str, &dyn rusqlite::ToSql)]> = placeholders
+            .iter()
+            .map(|(p, v)| (p.as_str(), v.as_ref()))
+            .collect();
+
+        let rows = stmt
+            .query_map(&params[..], |row| row.get("entity"))?
+            .map(|r| r.expect("EntityId from Query"))
+            .collect();
+
+        Ok(rows)
+    }
+}
+
+#[allow(unused)]
+impl Ecs {
+    #[instrument(level = "debug", skip_all)]
+    fn fetch_lazy<'a, Q: query::QueryData + 'a>(
+        &'a self,
+        sql_query: query::ir::Query,
+    ) -> Result<impl Iterator<Item = Q::Output<'a>> + 'a, Error> {
+        let rows = self
+            .fetch_entity_ids_lazy(sql_query)?
+            .scan(self, |ecs, eid| Some(Entity::with_id(&ecs, eid)))
+            .map(|e| {
+                debug!(
+                    data = std::any::type_name::<Q>(),
+                    entity = ?e,
+                    "Fetching QueryData"
+                );
+                Q::from_entity(e).unwrap()
+            });
+
+        Ok(rows)
+    }
+
+    fn fetch_entity_ids_lazy<'a>(
+        &'a self,
+        sql_query: query::ir::Query,
+    ) -> Result<impl Iterator<Item = EntityId> + 'a, Error> {
         let (sql, placeholders) = sql_query.into_sql();
         debug!(sql);
 
@@ -216,19 +278,7 @@ impl Ecs {
             OwningRows::try_new(MutBorrow::new(stmt), |s| s.borrow_mut().query(&params[..]))
                 .unwrap();
 
-        let rows = owning_rows
-            .map(|result| result.expect("EntityId from Row"))
-            .scan(self, |ecs, eid| Some(Entity::with_id(&ecs, eid)))
-            .map(|e| {
-                debug!(
-                    data = std::any::type_name::<Q>(),
-                    entity = ?e,
-                    "Fetching QueryData"
-                );
-                Q::from_entity(e).unwrap()
-            });
-
-        Ok(rows)
+        Ok(owning_rows.map(|result| result.expect("EntityId from Row")))
     }
 }
 
