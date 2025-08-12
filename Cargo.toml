@@ -8,7 +8,7 @@ anyhow = "1.0.94"
 anymap = "0.12.1"
 chrono = { version = "0.4.38", features = ["serde"] }
 clap = { version = "4.5.45", features = ["derive"] }
-ecsdb_derive = { path = "ecsdb_derive" }
+ecsdb_derive = { path = "./ecsdb_derive" }
 eloquent = "2.0.3"
 hex = "0.4.3"
 lazy_static = "1.5.0"
