@@ -22,7 +22,7 @@ impl Ecs {
         let name = R::resource_name();
         let mut query = self
             .conn
-            .prepare("select data from resources where name = ?1")?;
+            .prepare_cached("select data from resources where name = ?1")?;
         let row = query
             .query_and_then(params![name], |row| {
                 let data = row.get_ref("data")?;

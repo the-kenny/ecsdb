@@ -86,7 +86,7 @@ impl<'a> Entity<'a> {
         let mut stmt = self
             .0
             .conn
-            .prepare("select component from components where entity = ?1")?;
+            .prepare_cached("select component from components where entity = ?1")?;
         let names = stmt
             .query_map(params![self.id()], |row| row.get(0))?
             .collect::<Result<Vec<_>, _>>()?;
@@ -105,7 +105,7 @@ impl<'a> Entity<'a> {
         let mut stmt = self
             .0
             .conn
-            .prepare("select true from components where entity = ?1 and component = ?2")?;
+            .prepare_cached("select true from components where entity = ?1 and component = ?2")?;
         for name in component_names {
             if !stmt.exists(params![self.id(), name])? {
                 return Ok(false);
@@ -251,7 +251,7 @@ impl<'a> Entity<'a> {
     pub fn try_attach<B: Bundle>(self, component: B) -> Result<Self, Error> {
         let components = B::to_rusqlite(&component)?;
 
-        let mut stmt = self.0.conn.prepare(
+        let mut stmt = self.0.conn.prepare_cached(
             r#"
             insert into components (entity, component, data)
             values (?1, ?2, ?3)
@@ -283,7 +283,7 @@ impl<'a> Entity<'a> {
         let mut stmt = self
             .0
             .conn
-            .prepare("delete from components where entity = ?1 and component = ?2")?;
+            .prepare_cached("delete from components where entity = ?1 and component = ?2")?;
 
         for component in B::COMPONENTS {
             let deleted_rows = stmt.execute(params![self.id(), component])?;
@@ -325,7 +325,7 @@ impl<'a> NewEntity<'a> {
         let data = B::to_rusqlite(&bundle)?;
         assert!(!data.is_empty());
 
-        let mut stmt = self.0.conn.prepare(
+        let mut stmt = self.0.conn.prepare_cached(
             r#"
             insert into components (entity, component, data)
             values ((select coalesce(?1, max(entity)+1, 100) from components), ?2, ?3)
