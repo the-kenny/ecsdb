@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{fmt::Display, path::PathBuf};
 
 use clap::*;
 use ecsdb::*;
@@ -38,7 +38,7 @@ pub fn main() -> Result<(), anyhow::Error> {
 
     let mut rl = rustyline::DefaultEditor::new()?;
 
-    const COMMANDS: Commands = &[&Info];
+    const COMMANDS: Commands = &[&Info, &Sqlite];
 
     if let Some(command) = cli.command {
         debug!(?command, "Executing");
@@ -107,6 +107,58 @@ impl Command for Info {
         };
 
         println!("Database {}, data_version {}", db_path, db.data_version()?);
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct Sqlite;
+
+impl Sqlite {
+    fn run(db: &rusqlite::Connection, sql: &str) -> Result<(), rusqlite::Error> {
+        let mut stmt = db.prepare(sql)?;
+
+        let cols = stmt
+            .column_names()
+            .into_iter()
+            .map(String::from)
+            .collect::<Vec<_>>();
+
+        debug!(?cols);
+        println!("{}", cols.join("\t| "));
+
+        let mut rows = stmt.query([])?;
+
+        while let Some(row) = rows.next()? {
+            for col in &cols {
+                let val = row.get_ref(col.as_str())?;
+                let val: Box<dyn Display> = match val {
+                    rusqlite::types::ValueRef::Null => Box::new("NULL"),
+                    rusqlite::types::ValueRef::Integer(n) => Box::new(n),
+                    rusqlite::types::ValueRef::Real(r) => Box::new(r),
+                    rusqlite::types::ValueRef::Text(text) => Box::new(str::from_utf8(text)?),
+                    rusqlite::types::ValueRef::Blob(items) => {
+                        Box::new(format!("Blob<{} bytes>", items.len()))
+                    }
+                };
+                print!("{val}\t")
+            }
+
+            println!();
+        }
+
+        Ok(())
+    }
+}
+
+impl Command for Sqlite {
+    fn name(&self) -> &'static str {
+        ".sql"
+    }
+
+    fn execute(&self, db: &Ecs, input: &str) -> Result<(), CommandError> {
+        let sql = input.trim_start_matches(self.name()).trim();
+        Self::run(db.raw_sql(), sql).map_err(ecsdb::Error::from)?;
         Ok(())
     }
 }
