@@ -1,13 +1,8 @@
-use crate::{system, Entity, System};
+use crate::{system, Entity};
 
 pub trait SchedulingMode: std::fmt::Debug {
     fn should_run(&self, ecs: &crate::Ecs, system: Entity) -> bool;
     fn did_run(&self, _ecs: &crate::Ecs, _system: Entity) {}
-}
-
-pub struct Schedule {
-    pub mode: Box<dyn SchedulingMode>,
-    pub systems: Vec<Box<dyn System>>,
 }
 
 #[derive(Debug)]
