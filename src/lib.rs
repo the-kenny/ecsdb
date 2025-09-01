@@ -20,6 +20,7 @@ pub mod resource;
 pub use resource::*;
 
 pub mod schedule;
+pub use schedule::Schedule;
 
 pub mod sqlite_ext;
 
