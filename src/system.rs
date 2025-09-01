@@ -176,11 +176,11 @@ impl SystemParam for () {
 impl Ecs {
     pub fn run<Marker, F: IntoSystem<Marker>>(&self, system: F) -> Result<(), anyhow::Error> {
         let system = system.into_system();
-        self.run_system_internal(&system)
+        self.run_dynamic(&system)
     }
 
     #[tracing::instrument(name = "run", level="info", skip_all, fields(system = %system.name()))]
-    fn run_system_internal(&self, system: &dyn System) -> Result<(), anyhow::Error> {
+    pub fn run_dynamic(&self, system: &dyn System) -> Result<(), anyhow::Error> {
         let _span = tracing::info_span!("system", name = system.name().as_ref()).entered();
 
         let started = std::time::Instant::now();
@@ -295,8 +295,8 @@ mod tests {
     fn run_dyn_system() {
         let ecs = Ecs::open_in_memory().unwrap();
         let system = IntoSystem::into_boxed_system(|| ());
-        ecs.run_system_internal(&system).unwrap();
-        ecs.run_system_internal(system.as_ref()).unwrap();
+        ecs.run_dynamic(&system).unwrap();
+        ecs.run_dynamic(system.as_ref()).unwrap();
         ecs.run(system).unwrap();
     }
 
