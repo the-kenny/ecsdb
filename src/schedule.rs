@@ -1,4 +1,39 @@
-use crate::{system, IntoSystem, LastRun, System};
+use crate::{system, BoxedSystem, Ecs, IntoSystem, LastRun, System};
+
+use tracing::{debug, info, instrument};
+
+#[derive(Default)]
+pub struct Schedule(Vec<(BoxedSystem, Box<dyn SchedulingMode>)>);
+
+impl Schedule {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn add<Marker, S, M>(&mut self, system: S, mode: M) -> &mut Self
+    where
+        S: IntoSystem<Marker>,
+        S::System: 'static,
+        M: SchedulingMode,
+    {
+        self.0.push((system.into_boxed_system(), Box::new(mode)));
+        self
+    }
+
+    #[instrument(level = "debug", skip_all)]
+    pub fn tick(&self, ecs: &Ecs) -> Result<(), anyhow::Error> {
+        for (system, schedule) in self.0.iter() {
+            if schedule.should_run(&ecs, &system.name()) {
+                info!(system = %system.name(), "running");
+                ecs.run_dyn_system(system)?;
+            } else {
+                debug!(system = %system.name(), "skipping")
+            }
+        }
+
+        Ok(())
+    }
+}
 
 pub trait SchedulingMode: std::fmt::Debug + 'static {
     fn should_run(&self, ecs: &crate::Ecs, system: &str) -> bool;
@@ -71,5 +106,24 @@ impl SchedulingMode for After {
             (Some(LastRun(before)), Some(LastRun(after))) if before > after => true,
             (Some(_), Some(_)) => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn schedules() {
+        fn sys_a() {}
+        fn sys_b() {}
+        fn sys_c() {}
+
+        let mut schedule = Schedule::new();
+        schedule.add(sys_a, Always);
+        schedule.add(sys_b, After::system(sys_a));
+
+        let ecs = Ecs::open_in_memory().unwrap();
+        schedule.tick(&ecs).unwrap();
     }
 }
