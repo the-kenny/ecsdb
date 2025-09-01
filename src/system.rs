@@ -237,6 +237,18 @@ impl SystemParam for LastRun {
     }
 }
 
+impl AsRef<chrono::DateTime<chrono::Utc>> for LastRun {
+    fn as_ref(&self) -> &chrono::DateTime<chrono::Utc> {
+        &self.0
+    }
+}
+
+impl Borrow<chrono::DateTime<chrono::Utc>> for LastRun {
+    fn borrow(&self) -> &chrono::DateTime<chrono::Utc> {
+        &self.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::query::With;
@@ -286,7 +298,7 @@ mod tests {
     struct Seen;
 
     #[test]
-    fn run_query() {
+    fn run_query_param() {
         let db = Ecs::open_in_memory().unwrap();
         fn system(query: query::Query<Entity, With<(A, B)>>) {
             for entity in query.try_iter().unwrap() {
@@ -306,7 +318,7 @@ mod tests {
     }
 
     #[test]
-    fn run_ecs() {
+    fn run_ecs_param() {
         let db = Ecs::open_in_memory().unwrap();
         fn system(ecs: &Ecs) {
             ecs.new_entity().attach(Seen);
@@ -318,7 +330,7 @@ mod tests {
     }
 
     #[test]
-    fn system_entity_param() {
+    fn run_system_entity_param() {
         let db = Ecs::open_in_memory().unwrap();
         fn system(ecs: &Ecs, system: SystemEntity<'_>) {
             assert_eq!(
@@ -327,7 +339,7 @@ mod tests {
                     .component::<crate::system::Name>()
                     .unwrap()
                     .0,
-                "ecsdb::system::tests::system_entity_param::system"
+                "ecsdb::system::tests::run_system_entity_param::system"
             );
 
             ecs.new_entity().attach(Seen);
@@ -336,17 +348,5 @@ mod tests {
         db.run(system).unwrap();
 
         assert!(db.query::<Seen>().next().is_some());
-    }
-}
-
-impl AsRef<chrono::DateTime<chrono::Utc>> for LastRun {
-    fn as_ref(&self) -> &chrono::DateTime<chrono::Utc> {
-        &self.0
-    }
-}
-
-impl Borrow<chrono::DateTime<chrono::Utc>> for LastRun {
-    fn borrow(&self) -> &chrono::DateTime<chrono::Utc> {
-        &self.0
     }
 }
