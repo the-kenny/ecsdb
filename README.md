@@ -115,3 +115,33 @@ let ecs = Ecs::open_in_memory().unwrap();
 ecs.run_system(process_marked_system).unwrap();
 ecs.run_system(log_system).unwrap();
 ```
+
+## Scheduling
+
+`ecsdb::Schedule` allows scheduling of different systems by different criterias:
+
+```rust
+# use ecsdb::doctests::*;
+# let ecs  = Ecs::open_in_memory().unwrap();
+
+fn sys_a() {}
+fn sys_b() {}
+
+use ecsdb::schedule::*;
+let mut schedule = Schedule::new();
+
+// Run `sys_a` every 15 minutes
+schedule.add(sys_a, Every(chrono::Duration::minutes(15)));
+
+// Run `sys_b` after `sys_a`
+schedule.add(sys_b, After::system(sys_a));
+
+// Run all pending systems
+schedule.tick(&ecs);
+```
+
+- `schedule::Every(Duration)` runs a system periodically
+- `schedule::After` runs one system after another finished
+- `schedule::Once` runs a system once per database
+- `schedule::Always` runs a system on every `Schedule::tick`
+>>>>>>> Conflict 1 of 1 ends
