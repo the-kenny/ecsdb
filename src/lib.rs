@@ -33,6 +33,7 @@ pub use system::*;
 
 mod tuple_macros;
 
+use std::borrow::Cow;
 use std::path::Path;
 
 use tracing::{debug, instrument};
@@ -320,6 +321,10 @@ impl Default for LastUpdated {
     fn default() -> Self {
         Self(chrono::DateTime::<chrono::Utc>::MIN_UTC)
     }
+}
+
+pub fn system_name<S: IntoSystem<P>, P>(system: S) -> Cow<'static, str> {
+    system.into_system().name()
 }
 
 #[doc = include_str!("../README.md")]
