@@ -41,12 +41,15 @@ database.
 They must implement `serde::Serialize`, `serde::Deserialize` and
 `ecsdb::Component`, all of which can be `#[derive]`'d.
 
-```rust,ignore
+```rust
+# use serde::{Serialize, Deserialize};
+# use ecsdb::Component;
+
 #[derive(Serialize, Deserialize, Component)]
 pub struct Marker;
 
 #[derive(Serialize, Deserialize, Component)]
-pub struct Date(DateTime<Utc>);
+pub struct Date(chrono::DateTime<chrono::Utc>);
 
 #[derive(Serialize, Deserialize, Component)]
 pub enum State {
@@ -58,9 +61,15 @@ pub enum State {
 
 ## Entities
 
-```rust,ignore
+```rust
+# use ecsdb::{Component, Ecs, query::*};
+# use serde::{Serialize, Deserialize};
+# use ecsdb::doctests::*;
+
+# let ecs = Ecs::open_in_memory().unwrap();
+
 // Attach components via `Entity::attach`:
-let entity = Ecs::new_entity()
+let entity = ecs.new_entity()
     .attach(State::New);
 
 // To retrieve an attached component, use `Entity::component`:
@@ -80,7 +89,10 @@ Systems are functions operating on an `Ecs`. They can be registerd via
 `Ecs::register` and run via `Ecs::tick`. They can take a set of 'magic'
 parameters to access data in the `Ecs`:
 
-```rust,ignore
+```rust
+# use ecsdb::doctests::*;
+use ecsdb::query::{Query, With, Without};
+
 // This system will attach `State::New` to all entities that have a `Marker` but
 // no `State` component
 fn process_marked_system(marked_entities: Query<Entity, (With<Marker>, Without<State>)>) {
@@ -99,7 +111,7 @@ fn log_system(entities: Query<(EntityId, Date, Marker), Without<State>>) {
     }
 }
 
-ecs.run(process_marked_system)?;
-ecs.run(log_system)?;
-
+let ecs = Ecs::open_in_memory().unwrap();
+ecs.run(process_marked_system).unwrap();
+ecs.run(log_system).unwrap();
 ```

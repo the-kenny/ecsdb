@@ -327,9 +327,30 @@ pub fn system_name<S: IntoSystem<P>, P>(system: S) -> Cow<'static, str> {
     system.into_system().name()
 }
 
-#[doc = include_str!("../README.md")]
-#[cfg(doctest)]
-pub struct ReadmeDoctests;
+#[doc(hidden)]
+pub mod doctests {
+    use crate as ecsdb; // Fixes `#[derive(Component)]`
+
+    pub use crate::{Component, Ecs, Entity, EntityId};
+    pub use serde::{Deserialize, Serialize};
+
+    #[derive(Serialize, Deserialize, Component)]
+    pub struct Marker;
+
+    #[derive(Serialize, Deserialize, Component)]
+    pub struct Date(pub chrono::DateTime<chrono::Utc>);
+
+    #[derive(Serialize, Deserialize, Component)]
+    pub enum State {
+        New,
+        Processing,
+        Finished,
+    }
+
+    #[cfg(doctest)]
+    #[doc = include_str!("../README.md")]
+    pub struct ReadmeDoctests;
+}
 
 #[cfg(test)]
 mod tests {
