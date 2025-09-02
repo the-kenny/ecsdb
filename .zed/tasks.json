@@ -1,0 +1,11 @@
+// Project tasks configuration. See https://zed.dev/docs/tasks for documentation.
+//
+// Example:
+[
+  {
+    "label": "cargo test --doc",
+    "command": "cargo",
+    "args": ["test", "--doc"],
+    "tags": ["rust-doc-test"]
+  }
+]
