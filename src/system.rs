@@ -4,7 +4,10 @@ use tracing::{debug, error, info, instrument};
 use crate::{self as ecsdb, query, Component, Ecs, Entity};
 
 use core::marker::PhantomData;
-use std::borrow::{Borrow, Cow};
+use std::{
+    borrow::{Borrow, Cow},
+    ops::Deref,
+};
 
 #[derive(Serialize, Deserialize, Component, Debug, PartialEq, Eq, Hash)]
 pub struct Name(pub String);
@@ -246,6 +249,14 @@ impl<'a> AsRef<Entity<'a>> for SystemEntity<'a> {
     }
 }
 
+impl<'a> Deref for SystemEntity<'a> {
+    type Target = Entity<'a>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 impl SystemParam for SystemEntity<'_> {
     type Item<'world> = SystemEntity<'world>;
 
@@ -428,11 +439,7 @@ mod tests {
         let db = Ecs::open_in_memory().unwrap();
         fn system(ecs: &Ecs, system: SystemEntity<'_>) {
             assert_eq!(
-                system
-                    .as_ref()
-                    .component::<crate::system::Name>()
-                    .unwrap()
-                    .0,
+                system.component::<crate::system::Name>().unwrap().0,
                 "ecsdb::system::tests::run_system_entity_param::system"
             );
 

@@ -111,19 +111,53 @@ impl SchedulingMode for After {
 
 #[cfg(test)]
 mod test {
+    use crate::{self as ecsdb, SystemEntity};
+    use ecsdb_derive::Component;
+    use serde::{Deserialize, Serialize};
+
     use super::*;
+    use crate::system_name;
+
+    #[derive(Serialize, Deserialize, Component, Default, PartialEq, Debug)]
+    struct Count(pub usize);
 
     #[test]
     fn schedules() {
-        fn sys_a() {}
-        fn sys_b() {}
-        fn sys_c() {}
+        macro_rules! defsys {
+            ($sys:ident) => {
+                fn $sys(sys: SystemEntity<'_>) {
+                    sys.modify_component(|Count(ref mut c)| *c += 1);
+                }
+            };
+        }
+
+        defsys!(sys_a);
+        defsys!(sys_b);
+        defsys!(sys_c);
 
         let mut schedule = Schedule::new();
-        schedule.add(sys_a, Always);
+        schedule.add(sys_a, Once);
         schedule.add(sys_b, After::system(sys_a));
+        schedule.add(sys_c, Always);
 
         let ecs = Ecs::open_in_memory().unwrap();
         schedule.tick(&ecs).unwrap();
+        schedule.tick(&ecs).unwrap();
+
+        fn sys_count<Marker>(ecs: &Ecs, sys: impl IntoSystem<Marker>) -> Count {
+            ecs.system_entity(&system_name(sys))
+                .unwrap()
+                .component()
+                .unwrap()
+        }
+
+        // sys_a should have a count of 1
+        assert_eq!(sys_count(&ecs, sys_a), Count(1));
+
+        // sys_b should also have a count of 1
+        assert_eq!(sys_count(&ecs, sys_b), Count(1));
+
+        // sys_c should have a count of 2
+        assert_eq!(sys_count(&ecs, sys_c), Count(2));
     }
 }
