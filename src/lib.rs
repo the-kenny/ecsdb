@@ -323,7 +323,7 @@ impl Default for LastUpdated {
     }
 }
 
-pub fn system_name<S: IntoSystem<P>, P>(system: S) -> Cow<'static, str> {
+pub fn system_name<Marker, S: IntoSystem<Marker>>(system: S) -> Cow<'static, str> {
     system.into_system().name()
 }
 

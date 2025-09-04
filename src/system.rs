@@ -12,21 +12,46 @@ pub struct Name(pub String);
 #[derive(Serialize, Deserialize, Component, Debug)]
 pub struct LastRun(pub chrono::DateTime<chrono::Utc>);
 
-pub trait System: 'static + Send {
+pub trait System: 'static + Send + Sync {
     fn name(&self) -> Cow<'static, str>;
     fn run(&self, app: &Ecs) -> Result<(), anyhow::Error>;
 }
 
-pub trait IntoSystem<Params> {
+pub type BoxedSystem = Box<dyn System>;
+
+pub trait IntoSystem<Marker>: Sized {
     type System: System;
+
     fn into_system(self) -> Self::System;
 }
 
-impl<F, Params: SystemParam + 'static> IntoSystem<Params> for F
+impl<S: System> IntoSystem<()> for S {
+    type System = S;
+
+    fn into_system(self) -> Self::System {
+        self
+    }
+}
+
+impl System for BoxedSystem {
+    fn name(&self) -> Cow<'static, str> {
+        System::name(self.as_ref())
+    }
+
+    fn run(&self, app: &Ecs) -> Result<(), anyhow::Error> {
+        System::run(self.as_ref(), app)
+    }
+}
+
+#[doc(hidden)]
+pub struct FunctionSystemMarker;
+
+impl<Marker, F> IntoSystem<(Marker, FunctionSystemMarker)> for F
 where
-    F: SystemParamFunction<Params>,
+    Marker: 'static,
+    F: SystemParamFunction<Marker>,
 {
-    type System = FunctionSystem<F, Params>;
+    type System = FunctionSystem<Marker, F>;
 
     fn into_system(self) -> Self::System {
         FunctionSystem {
@@ -36,14 +61,18 @@ where
     }
 }
 
-pub struct FunctionSystem<F: 'static, Params: SystemParam> {
+pub struct FunctionSystem<Marker, F>
+where
+    F: 'static,
+{
     system: F,
-    params: PhantomData<fn() -> Params>,
+    params: PhantomData<fn() -> Marker>,
 }
 
-impl<F, Params: SystemParam + 'static> System for FunctionSystem<F, Params>
+impl<Marker, F> System for FunctionSystem<Marker, F>
 where
-    F: SystemParamFunction<Params>,
+    Marker: 'static,
+    F: SystemParamFunction<Marker>,
 {
     fn name(&self) -> Cow<'static, str> {
         Cow::Borrowed(std::any::type_name::<F>())
@@ -141,11 +170,9 @@ impl SystemParam for () {
 }
 
 impl Ecs {
-    pub fn run<F: IntoSystem<Params>, Params: SystemParam>(
-        &self,
-        system: F,
-    ) -> Result<(), anyhow::Error> {
-        self.run_system_internal(&system.into_system())
+    pub fn run<Marker, F: IntoSystem<Marker>>(&self, system: F) -> Result<(), anyhow::Error> {
+        let system = system.into_system();
+        self.run_system_internal(&system)
     }
 
     #[tracing::instrument(name = "run", level="info", skip_all, fields(system = %system.name()))]
