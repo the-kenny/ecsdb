@@ -17,12 +17,13 @@ pub trait System: 'static + Send + Sync {
     fn run(&self, app: &Ecs) -> Result<(), anyhow::Error>;
 }
 
-pub type BoxedSystem = Box<dyn System>;
-
 pub trait IntoSystem<Marker>: Sized {
     type System: System;
 
     fn into_system(self) -> Self::System;
+    fn into_boxed_system(self) -> BoxedSystem {
+        Box::new(self.into_system())
+    }
 }
 
 impl<S: System> IntoSystem<()> for S {
@@ -32,6 +33,8 @@ impl<S: System> IntoSystem<()> for S {
         self
     }
 }
+
+pub type BoxedSystem = Box<dyn System>;
 
 impl System for BoxedSystem {
     fn name(&self) -> Cow<'static, str> {
@@ -79,13 +82,14 @@ where
     }
 
     fn run(&self, app: &Ecs) -> Result<(), anyhow::Error> {
-        SystemParamFunction::run(&self.system, F::Param::get_param(app, &self.name())).into_result()
+        SystemParamFunction::run(&self.system, F::Params::get_param(app, &self.name()))
+            .into_result()
     }
 }
 
-trait SystemParamFunction<Marker>: Send + Sync + 'static {
-    type Param: SystemParam;
-    fn run(&self, param: <Self::Param as SystemParam>::Item<'_>) -> Result<(), anyhow::Error>;
+pub trait SystemParamFunction<Marker>: Send + Sync + 'static {
+    type Params: SystemParam;
+    fn run(&self, param: <Self::Params as SystemParam>::Item<'_>) -> Result<(), anyhow::Error>;
 }
 
 pub trait SystemOutput {
@@ -109,7 +113,7 @@ where
     F: Fn() -> Out + Send + Sync + 'static,
     Out: SystemOutput,
 {
-    type Param = ();
+    type Params = ();
     fn run(&self, _app: ()) -> Result<(), anyhow::Error> {
         self().into_result()
     }
@@ -128,7 +132,7 @@ macro_rules! impl_system_function {
                 Fn($(SystemParamItem<$param>),*) -> Out,
             Out: SystemOutput,
         {
-            type Param = ($($param,)*);
+            type Params = ($($param,)*);
 
             #[allow(non_snake_case)]
             #[allow(clippy::too_many_arguments)]
@@ -279,7 +283,22 @@ impl Borrow<chrono::DateTime<chrono::Utc>> for LastRun {
 #[cfg(test)]
 mod tests {
     use crate::query::With;
-    use crate::{query, Ecs, Entity, SystemEntity};
+    use crate::{query, Ecs, Entity, IntoSystem, SystemEntity};
+
+    #[test]
+    fn run_system() {
+        let ecs = Ecs::open_in_memory().unwrap();
+        ecs.run(|| ()).unwrap();
+    }
+
+    #[test]
+    fn run_dyn_system() {
+        let ecs = Ecs::open_in_memory().unwrap();
+        let system = IntoSystem::into_boxed_system(|| ());
+        ecs.run_system_internal(&system).unwrap();
+        ecs.run_system_internal(system.as_ref()).unwrap();
+        ecs.run(system).unwrap();
+    }
 
     #[test]
     fn no_param() {
