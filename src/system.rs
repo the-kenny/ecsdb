@@ -177,6 +177,7 @@ impl SystemParam for () {
 }
 
 impl Ecs {
+    #[deprecated(note = "use Ecs::run_system")]
     pub fn run<Marker, F: IntoSystem<Marker>>(&self, system: F) -> Result<(), anyhow::Error> {
         self.run_system(system)
     }
