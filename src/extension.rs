@@ -71,6 +71,6 @@ mod test {
             assert_eq!(test.0, 1234);
         }
 
-        ecs.run(sys).unwrap();
+        ecs.run_system(sys).unwrap();
     }
 }

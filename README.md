@@ -112,6 +112,6 @@ fn log_system(entities: Query<(EntityId, Date, Marker), Without<State>>) {
 }
 
 let ecs = Ecs::open_in_memory().unwrap();
-ecs.run(process_marked_system).unwrap();
-ecs.run(log_system).unwrap();
+ecs.run_system(process_marked_system).unwrap();
+ecs.run_system(log_system).unwrap();
 ```

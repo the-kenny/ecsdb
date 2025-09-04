@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, instrument};
 
 use crate::{self as ecsdb, query, Component, Ecs, Entity};
 
@@ -14,7 +14,7 @@ pub struct LastRun(pub chrono::DateTime<chrono::Utc>);
 
 pub trait System: 'static + Send + Sync {
     fn name(&self) -> Cow<'static, str>;
-    fn run(&self, app: &Ecs) -> Result<(), anyhow::Error>;
+    fn run_system(&self, app: &Ecs) -> Result<(), anyhow::Error>;
 }
 
 pub trait IntoSystem<Marker>: Sized {
@@ -41,8 +41,8 @@ impl System for BoxedSystem {
         System::name(self.as_ref())
     }
 
-    fn run(&self, app: &Ecs) -> Result<(), anyhow::Error> {
-        System::run(self.as_ref(), app)
+    fn run_system(&self, app: &Ecs) -> Result<(), anyhow::Error> {
+        System::run_system(self.as_ref(), app)
     }
 }
 
@@ -81,15 +81,18 @@ where
         Cow::Borrowed(std::any::type_name::<F>())
     }
 
-    fn run(&self, app: &Ecs) -> Result<(), anyhow::Error> {
-        SystemParamFunction::run(&self.system, F::Params::get_param(app, &self.name()))
+    fn run_system(&self, app: &Ecs) -> Result<(), anyhow::Error> {
+        SystemParamFunction::run_system(&self.system, F::Params::get_param(app, &self.name()))
             .into_result()
     }
 }
 
 pub trait SystemParamFunction<Marker>: Send + Sync + 'static {
     type Params: SystemParam;
-    fn run(&self, param: <Self::Params as SystemParam>::Item<'_>) -> Result<(), anyhow::Error>;
+    fn run_system(
+        &self,
+        param: <Self::Params as SystemParam>::Item<'_>,
+    ) -> Result<(), anyhow::Error>;
 }
 
 pub trait SystemOutput {
@@ -114,7 +117,7 @@ where
     Out: SystemOutput,
 {
     type Params = ();
-    fn run(&self, _app: ()) -> Result<(), anyhow::Error> {
+    fn run_system(&self, _app: ()) -> Result<(), anyhow::Error> {
         self().into_result()
     }
 }
@@ -136,7 +139,7 @@ macro_rules! impl_system_function {
 
             #[allow(non_snake_case)]
             #[allow(clippy::too_many_arguments)]
-            fn run(&self, p: SystemParamItem<($($param,)*)>) -> Result<(), anyhow::Error> {
+            fn run_system(&self, p: SystemParamItem<($($param,)*)>) -> Result<(), anyhow::Error> {
                 let ($($param,)*) = p;
                 (&self)( $($param),*).into_result()
             }
@@ -175,21 +178,26 @@ impl SystemParam for () {
 
 impl Ecs {
     pub fn run<Marker, F: IntoSystem<Marker>>(&self, system: F) -> Result<(), anyhow::Error> {
-        let system = system.into_system();
-        self.run_dynamic(&system)
+        self.run_system(system)
     }
 
-    #[tracing::instrument(name = "run", level="info", skip_all, fields(system = %system.name()))]
-    pub fn run_dynamic(&self, system: &dyn System) -> Result<(), anyhow::Error> {
-        let _span = tracing::info_span!("system", name = system.name().as_ref()).entered();
+    pub fn run_system<Marker, F: IntoSystem<Marker>>(
+        &self,
+        system: F,
+    ) -> Result<(), anyhow::Error> {
+        let system = system.into_system();
+        self.run_dyn_system(&system)
+    }
 
+    #[instrument(level="info", name="run_system", skip_all, fields(name = %system.name()))]
+    pub(crate) fn run_dyn_system(&self, system: &dyn System) -> Result<(), anyhow::Error> {
         let started = std::time::Instant::now();
 
         let system_entity = self.get_or_create_system_entity(&system.name());
 
         info!("Running");
 
-        if let Err(e) = system.run(&self) {
+        if let Err(e) = system.run_system(&self) {
             error!(?e);
             return Err(e);
         }
@@ -288,45 +296,47 @@ mod tests {
     #[test]
     fn run_system() {
         let ecs = Ecs::open_in_memory().unwrap();
-        ecs.run(|| ()).unwrap();
+        ecs.run_system(|| ()).unwrap();
     }
 
     #[test]
     fn run_dyn_system() {
         let ecs = Ecs::open_in_memory().unwrap();
         let system = IntoSystem::into_boxed_system(|| ());
-        ecs.run_dynamic(&system).unwrap();
-        ecs.run_dynamic(system.as_ref()).unwrap();
-        ecs.run(system).unwrap();
+        ecs.run_dyn_system(&system).unwrap();
+        ecs.run_dyn_system(system.as_ref()).unwrap();
+        ecs.run_system(system).unwrap();
     }
 
     #[test]
     fn no_param() {
         let ecs = Ecs::open_in_memory().unwrap();
-        ecs.run(|| ()).unwrap();
+        ecs.run_system(|| ()).unwrap();
     }
 
     #[test]
     fn ecs_param() {
         let ecs = Ecs::open_in_memory().unwrap();
-        ecs.run(|_ecs: &Ecs| ()).unwrap();
-        // ecs.run(|_ecs: &Ecs| ());
+        ecs.run_system(|_ecs: &Ecs| ()).unwrap();
+        // ecs.run_system(|_ecs: &Ecs| ());
     }
 
     #[test]
     fn query_param() {
         let ecs = Ecs::open_in_memory().unwrap();
-        ecs.run(|_q: query::Query<()>| ()).unwrap();
+        ecs.run_system(|_q: query::Query<()>| ()).unwrap();
     }
 
     #[test]
     fn multiple_params() {
         let ecs = Ecs::open_in_memory().unwrap();
-        ecs.run(|_ecs: &Ecs, _q: query::Query<()>| ()).unwrap();
-        ecs.run(|_: &Ecs, _: &Ecs| ()).unwrap();
-        ecs.run(|_: &Ecs, _: &Ecs, _: &Ecs| ()).unwrap();
-        ecs.run(|_: &Ecs, _: &Ecs, _: &Ecs, _: &Ecs| ()).unwrap();
-        ecs.run(|_: &Ecs, _: &Ecs, _: &Ecs, _: &Ecs, _: &Ecs| ())
+        ecs.run_system(|_ecs: &Ecs, _q: query::Query<()>| ())
+            .unwrap();
+        ecs.run_system(|_: &Ecs, _: &Ecs| ()).unwrap();
+        ecs.run_system(|_: &Ecs, _: &Ecs, _: &Ecs| ()).unwrap();
+        ecs.run_system(|_: &Ecs, _: &Ecs, _: &Ecs, _: &Ecs| ())
+            .unwrap();
+        ecs.run_system(|_: &Ecs, _: &Ecs, _: &Ecs, _: &Ecs, _: &Ecs| ())
             .unwrap();
     }
 
@@ -357,7 +367,7 @@ mod tests {
         let a_and_b = db.new_entity().attach(A).attach(B);
         let a = db.new_entity().attach(A);
 
-        db.run(system).unwrap();
+        db.run_system(system).unwrap();
 
         assert!(a_and_b.component::<Seen>().is_some());
         assert!(a.component::<Seen>().is_none());
@@ -370,7 +380,7 @@ mod tests {
             ecs.new_entity().attach(Seen);
         }
 
-        db.run(system).unwrap();
+        db.run_system(system).unwrap();
 
         assert!(db.query::<Seen>().next().is_some());
     }
@@ -391,7 +401,7 @@ mod tests {
             ecs.new_entity().attach(Seen);
         }
 
-        db.run(system).unwrap();
+        db.run_system(system).unwrap();
 
         assert!(db.query::<Seen>().next().is_some());
     }
