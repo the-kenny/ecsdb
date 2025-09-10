@@ -1,6 +1,6 @@
 use crate::{system, BoxedSystem, Ecs, IntoSystem, LastRun, System};
 
-use tracing::{debug, info, instrument};
+use tracing::{debug, debug_span, info, instrument};
 
 #[derive(Default)]
 pub struct Schedule(Vec<(BoxedSystem, Box<dyn SchedulingMode>)>);
@@ -23,11 +23,13 @@ impl Schedule {
     #[instrument(level = "debug", skip_all)]
     pub fn tick(&self, ecs: &Ecs) -> Result<(), anyhow::Error> {
         for (system, schedule) in self.0.iter() {
+            let _span = debug_span!("system", name = %system.name()).entered();
+
             if schedule.should_run(&ecs, &system.name()) {
-                info!(system = %system.name(), "running");
+                info!("running");
                 ecs.run_dyn_system(system)?;
             } else {
-                debug!(system = %system.name(), "skipping")
+                debug!("skipping")
             }
         }
 
@@ -48,6 +50,7 @@ pub trait SchedulingMode: std::fmt::Debug + 'static {
 pub struct Manually;
 
 impl SchedulingMode for Manually {
+    #[instrument(level = "debug", skip_all, fields(self), ret)]
     fn should_run(&self, _ecs: &crate::Ecs, _system: &str) -> bool {
         false
     }
@@ -57,6 +60,7 @@ impl SchedulingMode for Manually {
 pub struct Always;
 
 impl SchedulingMode for Always {
+    #[instrument(level = "debug", skip_all, fields(self), ret)]
     fn should_run(&self, _ecs: &crate::Ecs, _system: &str) -> bool {
         true
     }
@@ -66,10 +70,14 @@ impl SchedulingMode for Always {
 pub struct Every(pub chrono::Duration);
 
 impl SchedulingMode for Every {
+    #[instrument(level = "debug", skip_all, fields(self), ret)]
     fn should_run(&self, ecs: &crate::Ecs, system: &str) -> bool {
         ecs.system_entity(system)
             .and_then(|e| e.component::<system::LastRun>())
-            .map(|last_run| chrono::Utc::now().signed_duration_since(&last_run.0) > self.0)
+            .map(|last_run| {
+                debug!(?last_run);
+                chrono::Utc::now().signed_duration_since(&last_run.0) > self.0
+            })
             .unwrap_or(true)
     }
 }
@@ -78,6 +86,7 @@ impl SchedulingMode for Every {
 pub struct Once;
 
 impl SchedulingMode for Once {
+    #[instrument(level = "debug", skip_all, fields(self), ret)]
     fn should_run(&self, ecs: &crate::Ecs, system: &str) -> bool {
         let entity = ecs.get_or_create_system_entity(system);
         entity.component::<system::LastRun>().is_none()
@@ -97,12 +106,15 @@ impl After {
 }
 
 impl SchedulingMode for After {
+    #[instrument(level = "debug", skip_all, fields(self), ret)]
     fn should_run(&self, ecs: &crate::Ecs, system: &str) -> bool {
         let predecessor_last_run = ecs.system_entity(&self.0).and_then(|e| e.component());
 
         let our_last_run = ecs
             .system_entity(system)
             .and_then(|e| e.component::<LastRun>());
+
+        debug!(?our_last_run, ?predecessor_last_run);
 
         match (predecessor_last_run, our_last_run) {
             (None, _) => false,
