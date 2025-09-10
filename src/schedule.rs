@@ -33,6 +33,10 @@ impl Schedule {
 
         Ok(())
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = &(BoxedSystem, Box<dyn SchedulingMode>)> {
+        self.0.iter()
+    }
 }
 
 pub trait SchedulingMode: std::fmt::Debug + 'static {
