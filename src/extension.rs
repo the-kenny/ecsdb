@@ -1,3 +1,5 @@
+use tracing::{instrument, warn};
+
 use crate::{Ecs, SystemParam};
 
 #[derive(Debug, thiserror::Error)]
@@ -17,6 +19,7 @@ impl<E: Extension + 'static> SystemParam for &E {
 }
 
 impl Ecs {
+    #[instrument(level = "debug", skip_all, fields(extension = std::any::type_name::<E>()), ret, err)]
     pub fn register_extension<E: Extension + 'static>(
         &mut self,
         extension: E,
@@ -29,12 +32,17 @@ impl Ecs {
         }
     }
 
+    #[instrument(level = "debug", skip_all, fields(extension = std::any::type_name::<E>()))]
     pub fn try_extension<'a, E: Extension + 'static>(&'a self) -> Option<&'a E> {
-        self.extensions.get()
+        self.extensions.get().or_else(|| {
+            warn!("Extension not registered");
+            None
+        })
     }
 
     pub fn extension<'a, E: Extension + 'static>(&'a self) -> &'a E {
-        self.try_extension().expect("Existing Extension")
+        self.try_extension()
+            .unwrap_or_else(|| panic!("Extension '{}' not registered", std::any::type_name::<E>()))
     }
 }
 
