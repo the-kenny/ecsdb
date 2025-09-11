@@ -12,16 +12,19 @@ pub struct Name(pub String);
 #[derive(Serialize, Deserialize, Component, Debug)]
 pub struct LastRun(pub chrono::DateTime<chrono::Utc>);
 
-pub trait System: 'static + Send + Sync {
+pub trait System: Send + Sync {
     fn name(&self) -> Cow<'static, str>;
     fn run_system(&self, app: &Ecs) -> Result<(), anyhow::Error>;
 }
 
 pub trait IntoSystem<Marker>: Sized {
     type System: System;
-
     fn into_system(self) -> Self::System;
-    fn into_boxed_system(self) -> BoxedSystem {
+
+    fn into_boxed_system(self) -> BoxedSystem
+    where
+        Self::System: 'static,
+    {
         Box::new(self.into_system())
     }
 }
@@ -31,6 +34,16 @@ impl<S: System> IntoSystem<()> for S {
 
     fn into_system(self) -> Self::System {
         self
+    }
+}
+
+impl<'a, S: System> System for &'a S {
+    fn name(&self) -> Cow<'static, str> {
+        (*self).name()
+    }
+
+    fn run_system(&self, app: &Ecs) -> Result<(), anyhow::Error> {
+        (*self).run_system(app)
     }
 }
 
@@ -182,8 +195,8 @@ impl Ecs {
         self.run_system(system)
     }
 
-    pub fn run_system<Marker, F: IntoSystem<Marker>>(
-        &self,
+    pub fn run_system<'a, Marker, F: IntoSystem<Marker> + 'a>(
+        &'a self,
         system: F,
     ) -> Result<(), anyhow::Error> {
         let system = system.into_system();
@@ -291,8 +304,10 @@ impl Borrow<chrono::DateTime<chrono::Utc>> for LastRun {
 
 #[cfg(test)]
 mod tests {
+    use std::marker::PhantomData;
+
     use crate::query::With;
-    use crate::{query, Ecs, Entity, IntoSystem, SystemEntity};
+    use crate::{query, Ecs, Entity, IntoSystem, System, SystemEntity};
 
     #[test]
     fn run_system() {
@@ -301,12 +316,34 @@ mod tests {
     }
 
     #[test]
+    fn run_system_boxed() {
+        let ecs = Ecs::open_in_memory().unwrap();
+        let system = IntoSystem::into_boxed_system(|| ());
+        ecs.run_system(&system).unwrap();
+        ecs.run_system(system).unwrap();
+    }
+
+    #[test]
     fn run_dyn_system() {
         let ecs = Ecs::open_in_memory().unwrap();
         let system = IntoSystem::into_boxed_system(|| ());
         ecs.run_dyn_system(&system).unwrap();
         ecs.run_dyn_system(system.as_ref()).unwrap();
-        ecs.run_system(system).unwrap();
+    }
+
+    #[test]
+    fn non_static_system() {
+        let ecs = Ecs::open_in_memory().unwrap();
+
+        struct NonStaticSystem<'a>(PhantomData<&'a ()>);
+        #[rustfmt::skip]
+        impl<'a> System for NonStaticSystem<'a> {
+            fn name(&self) -> std::borrow::Cow<'static, str> { "".into() }
+            fn run_system(&self, _app: &Ecs) -> Result<(), anyhow::Error> { Ok(()) }
+        }
+
+        let non_static: NonStaticSystem<'_> = NonStaticSystem(PhantomData);
+        ecs.run_system(&non_static).unwrap();
     }
 
     #[test]
