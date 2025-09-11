@@ -4,23 +4,23 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-anyhow = "1.0.94"
+anyhow = "1.0.99"
 anymap = "0.12.1"
-chrono = { version = "0.4.38", features = ["serde"] }
-clap = { version = "4.5.45", features = ["derive"] }
+chrono = { version = "0.4.42", features = ["serde"] }
+clap = { version = "4.5.47", features = ["derive"] }
 ecsdb_derive = { path = "./ecsdb_derive" }
-eloquent = "2.0.3"
+eloquent = "2.0.4"
 hex = "0.4.3"
 lazy_static = "1.5.0"
-regex = "1.11.1"
-rusqlite = { version = "0.32.1", features = ["modern_sqlite", "functions"] }
+regex = "1.11.2"
+rusqlite = { version = "0.37.0", features = ["modern_sqlite", "functions"] }
 rustyline = "17.0.1"
 self_cell = "1.2.0"
-serde = { version = "1.0.215", features = ["derive"] }
-serde_json = "1.0.133"
-thiserror = "2.0.4"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.143"
+thiserror = "2.0.16"
 tracing = "0.1.41"
-tracing-subscriber = "0.3.19"
+tracing-subscriber = "0.3.20"
 
 [dev-dependencies]
-insta = "1.42.2"
+insta = "1.43.2"
