@@ -1,6 +1,8 @@
+use std::borrow::Cow;
+
 use crate::{system, BoxedSystem, Ecs, IntoSystem, LastRun, System};
 
-use tracing::{debug, debug_span, info, instrument};
+use tracing::{debug, debug_span, info, instrument, warn};
 
 #[derive(Default)]
 pub struct Schedule(Vec<(BoxedSystem, Box<dyn SchedulingMode>)>);
@@ -21,24 +23,43 @@ impl Schedule {
     }
 
     #[instrument(level = "debug", skip_all)]
-    pub fn tick(&self, ecs: &Ecs) -> Result<(), anyhow::Error> {
+    pub fn tick<'a>(&'a self, ecs: &Ecs) -> Result<Vec<(Cow<'a, str>, TickResult)>, anyhow::Error> {
+        let mut results = Vec::with_capacity(self.0.len());
+
         for (system, schedule) in self.0.iter() {
             let _span = debug_span!("system", name = %system.name()).entered();
 
-            if schedule.should_run(&ecs, &system.name()) {
+            let result = if schedule.should_run(&ecs, &system.name()) {
                 info!("running");
-                ecs.run_dyn_system(system)?;
+                match ecs.run_dyn_system(system) {
+                    Ok(()) => TickResult::Ok,
+                    Err(e) => {
+                        warn!(error = %e, "System failed");
+                        TickResult::Error(e.into())
+                    }
+                }
             } else {
-                debug!("skipping")
-            }
+                debug!("skipping");
+                TickResult::NotScheduled
+            };
+
+            debug!(?result);
+            results.push((system.name(), result));
         }
 
-        Ok(())
+        Ok(results)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &(BoxedSystem, Box<dyn SchedulingMode>)> {
         self.0.iter()
     }
+}
+
+#[derive(Debug)]
+pub enum TickResult {
+    Ok,
+    NotScheduled,
+    Error(anyhow::Error),
 }
 
 pub trait SchedulingMode: std::fmt::Debug + 'static {
@@ -175,5 +196,32 @@ mod test {
 
         // sys_c should have a count of 2
         assert_eq!(sys_count(&ecs, sys_c), Count(2));
+    }
+
+    #[test]
+    fn tick_results() {
+        #[rustfmt::skip]
+        fn system_ok(sys: SystemEntity<'_>) { sys.modify_component(|Count(ref mut c)| *c += 1); }
+        #[rustfmt::skip]
+        fn system_error(_sys: SystemEntity<'_>) -> Result<(), anyhow::Error> { Err(anyhow::anyhow!("Expected test error")) }
+
+        let mut schedule = Schedule::new();
+        schedule.add(system_ok, Always);
+        schedule.add(system_error, Always);
+        schedule.add(system_ok, Manually);
+
+        let ecs = Ecs::open_in_memory().unwrap();
+        let results = schedule.tick(&ecs).unwrap();
+
+        assert_eq!(results.len(), 3);
+
+        // First system should run successfully
+        assert!(matches!(results[0].1, TickResult::Ok));
+
+        // Second system should return an error
+        assert!(matches!(results[1].1, TickResult::Error(_)));
+
+        // Third system should be skipped due to Manually scheduling
+        assert!(matches!(results[2].1, TickResult::NotScheduled));
     }
 }
