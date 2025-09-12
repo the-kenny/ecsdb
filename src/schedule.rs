@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use crate::{system, BoxedSystem, Ecs, IntoSystem, LastRun, System};
 
-use tracing::{debug, debug_span, info, instrument, warn};
+use tracing::{debug, debug_span, instrument, warn};
 
 #[derive(Default)]
 pub struct Schedule(Vec<(BoxedSystem, Box<dyn SchedulingMode>)>);
@@ -22,7 +22,7 @@ impl Schedule {
         self
     }
 
-    #[instrument(level = "debug", skip_all)]
+    #[instrument(level = "debug", skip_all, ret, err)]
     pub fn tick<'a>(&'a self, ecs: &Ecs) -> Result<Vec<(Cow<'a, str>, TickResult)>, anyhow::Error> {
         let mut results = Vec::with_capacity(self.0.len());
 
@@ -30,7 +30,6 @@ impl Schedule {
             let _span = debug_span!("system", name = %system.name()).entered();
 
             let result = if schedule.should_run(&ecs, &system.name()) {
-                info!("running");
                 match ecs.run_dyn_system(system) {
                     Ok(()) => TickResult::Ok,
                     Err(e) => {
