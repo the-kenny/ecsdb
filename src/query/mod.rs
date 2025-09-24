@@ -29,7 +29,7 @@ pub struct Without<C>(PhantomData<C>);
 /// Matches if any of the filters in `F` match
 pub struct Or<F>(F);
 
-pub trait FilterValue: Sized {
+pub trait QueryFilterValue: Sized {
     fn filter_expression(&self) -> ir::FilterExpression;
 }
 
@@ -220,27 +220,27 @@ impl<C: Component> QueryFilter for Without<C> {
     }
 }
 
-pub(crate) struct FilterValueWrapper<F: Sized + FilterValue>(pub(crate) F);
+pub(crate) struct FilterValueWrapper<F: Sized + QueryFilterValue>(pub(crate) F);
 
-impl<F: FilterValue> QueryFilter for FilterValueWrapper<F> {
+impl<F: QueryFilterValue> QueryFilter for FilterValueWrapper<F> {
     fn filter_expression(&self) -> ir::FilterExpression {
-        <F as FilterValue>::filter_expression(&self.0)
+        <F as QueryFilterValue>::filter_expression(&self.0)
     }
 }
 
-impl<F: FilterValue> From<F> for FilterValueWrapper<F> {
+impl<F: QueryFilterValue> From<F> for FilterValueWrapper<F> {
     fn from(value: F) -> Self {
         Self(value)
     }
 }
 
-impl FilterValue for EntityId {
+impl QueryFilterValue for EntityId {
     fn filter_expression(&self) -> ir::FilterExpression {
         ir::FilterExpression::entity(*self)
     }
 }
 
-impl<C: Component> FilterValue for C {
+impl<C: Component> QueryFilterValue for C {
     fn filter_expression(&self) -> ir::FilterExpression {
         use rusqlite::types::ToSqlOutput;
 
@@ -254,7 +254,7 @@ impl<C: Component> FilterValue for C {
     }
 }
 
-impl<C: FilterValue + Component> FilterValue for std::ops::Range<C> {
+impl<C: QueryFilterValue + Component> QueryFilterValue for std::ops::Range<C> {
     fn filter_expression(&self) -> ir::FilterExpression {
         use rusqlite::types::ToSqlOutput;
 
@@ -278,7 +278,7 @@ impl<C: FilterValue + Component> FilterValue for std::ops::Range<C> {
     }
 }
 
-impl<C: FilterValue + Component> FilterValue for std::ops::RangeTo<C> {
+impl<C: QueryFilterValue + Component> QueryFilterValue for std::ops::RangeTo<C> {
     fn filter_expression(&self) -> ir::FilterExpression {
         use rusqlite::types::ToSqlOutput;
 
@@ -296,7 +296,7 @@ impl<C: FilterValue + Component> FilterValue for std::ops::RangeTo<C> {
     }
 }
 
-impl<C: FilterValue + Component> FilterValue for std::ops::RangeFrom<C> {
+impl<C: QueryFilterValue + Component> QueryFilterValue for std::ops::RangeFrom<C> {
     fn filter_expression(&self) -> ir::FilterExpression {
         use rusqlite::types::ToSqlOutput;
 
@@ -342,9 +342,9 @@ mod tuples {
     macro_rules! filter_value_impl {
         ( $($ts:ident)* ) => {
 
-            impl<$($ts,)+> FilterValue for ($($ts,)+)
+            impl<$($ts,)+> QueryFilterValue for ($($ts,)+)
             where
-                $($ts: FilterValue,)+
+                $($ts: QueryFilterValue,)+
             {
 
                 fn filter_expression(&self) -> ir::FilterExpression{

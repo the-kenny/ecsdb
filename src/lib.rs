@@ -154,20 +154,20 @@ impl Ecs {
 }
 
 impl Ecs {
-    pub fn find<'a, F>(&'a self, filter: F) -> impl Iterator<Item = Entity<'a>> + 'a
+    pub fn find<'a, V>(&'a self, filter: V) -> impl Iterator<Item = Entity<'a>> + 'a
     where
-        F: query::FilterValue,
+        V: query::QueryFilterValue,
     {
-        self.try_find::<F>(filter).unwrap()
+        self.try_find::<V>(filter).unwrap()
     }
 
     #[instrument(name = "find", level = "debug", skip_all)]
-    pub fn try_find<'a, F>(
+    pub fn try_find<'a, V>(
         &'a self,
-        filter: F,
+        filter: V,
     ) -> Result<impl Iterator<Item = Entity<'a>> + 'a, Error>
     where
-        F: query::FilterValue,
+        V: query::QueryFilterValue,
     {
         let query = query::Query::<Entity, _>::new(self, query::FilterValueWrapper(filter));
         query.try_iter()
