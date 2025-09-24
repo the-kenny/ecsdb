@@ -447,6 +447,11 @@ mod test {
             insta::with_settings!({omit_expression => true, description => &expr, snapshot_suffix => &expr}, {
                 assert_debug_snapshot!(case.sql_query());
             });
+
+            let expr = format!("{case:?}.simplify().sql_query()");
+            insta::with_settings!({omit_expression => true, description => &expr, snapshot_suffix => &expr}, {
+                assert_debug_snapshot!(case.simplify().sql_query());
+            });
         }
     }
 }

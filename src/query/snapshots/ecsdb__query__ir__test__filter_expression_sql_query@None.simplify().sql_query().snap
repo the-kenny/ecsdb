@@ -1,0 +1,8 @@
+---
+source: src/query/ir.rs
+description: None.simplify().sql_query()
+---
+SqlFragment<ecsdb::query::ir::Select> {
+    sql: "select distinct entity from components where true",
+    placeholders: [],
+}
