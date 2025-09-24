@@ -124,14 +124,14 @@ impl Ecs {
         Q: query::QueryData + 'a,
     {
         debug!(query = std::any::type_name::<Q>());
-        let query = query::Query::<Q>::new(self, ());
+        let query = query::Query::<Q>::new(self);
         query.try_iter()
     }
 
     pub fn query_filtered<'a, D, F>(&'a self) -> impl Iterator<Item = D::Output<'a>> + 'a
     where
         D: query::QueryData + 'a,
-        F: query::QueryFilter + Default + 'a,
+        F: query::QueryFilter + 'a,
     {
         self.try_query_filtered::<D, F>().unwrap()
     }
@@ -141,14 +141,14 @@ impl Ecs {
         &'a self,
     ) -> Result<impl Iterator<Item = Q::Output<'a>> + 'a, Error>
     where
-        F: query::QueryFilter + Default + 'a,
+        F: query::QueryFilter + 'a,
         Q: query::QueryData + 'a,
     {
         debug!(
             query = std::any::type_name::<Q>(),
             filter = std::any::type_name::<F>()
         );
-        let query = query::Query::<Q, F>::new(self, Default::default());
+        let query = query::Query::<Q, F>::new(self);
         query.try_iter()
     }
 }
@@ -164,12 +164,12 @@ impl Ecs {
     #[instrument(name = "find", level = "debug", skip_all)]
     pub fn try_find<'a, V>(
         &'a self,
-        filter: V,
+        filter_value: V,
     ) -> Result<impl Iterator<Item = Entity<'a>> + 'a, Error>
     where
         V: query::QueryFilterValue,
     {
-        let query = query::Query::<Entity, _>::new(self, query::FilterValueWrapper(filter));
+        let query = query::Query::<Entity, (), _>::with_filter(self, filter_value);
         query.try_iter()
     }
 }

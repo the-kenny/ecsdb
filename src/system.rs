@@ -284,7 +284,7 @@ where
     type Item<'world> = query::Query<'world, D, F>;
 
     fn get_param<'world>(world: &'world Ecs, _system: &str) -> Self::Item<'world> {
-        query::Query::new(world, F::default())
+        query::Query::new(world)
     }
 }
 

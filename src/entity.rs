@@ -3,7 +3,7 @@ use tracing::{debug, trace};
 
 use crate::{
     component::Bundle,
-    query::{self, FilterValueWrapper},
+    query::{self},
     Component, CreatedAt, DynComponent, Ecs, EntityId, Error, LastUpdated,
 };
 
@@ -216,15 +216,12 @@ pub enum ModifyComponentError {
 }
 
 impl<'a> Entity<'a> {
-    pub fn try_matches<D: query::QueryFilter + Default>(&self) -> Result<bool, Error> {
-        let q = query::Query::<(), (FilterValueWrapper<EntityId>, _)>::new(
-            self.db(),
-            (self.id().into(), D::default()),
-        );
+    pub fn try_matches<D: query::QueryFilter>(&self) -> Result<bool, Error> {
+        let q = query::Query::<(), D, EntityId>::with_filter(self.db(), self.id());
         Ok(q.try_iter()?.next().is_some())
     }
 
-    pub fn matches<D: query::QueryFilter + Default>(&self) -> bool {
+    pub fn matches<D: query::QueryFilter>(&self) -> bool {
         self.try_matches::<D>().unwrap()
     }
 

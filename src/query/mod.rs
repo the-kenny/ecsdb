@@ -14,7 +14,7 @@ pub trait QueryData {
 }
 
 pub trait QueryFilter {
-    fn filter_expression(&self) -> ir::FilterExpression;
+    fn filter_expression() -> ir::FilterExpression;
 }
 
 /// Matches if any of the Filters in `C` matches
@@ -33,29 +33,43 @@ pub trait QueryFilterValue: Sized {
     fn filter_expression(&self) -> ir::FilterExpression;
 }
 
-pub struct Query<'a, D = Entity<'a>, F = ()>
+pub struct Query<'a, D = Entity<'a>, F = (), V = ()>
 where
     F: ?Sized,
 {
     pub(crate) ecs: &'a crate::Ecs,
     pub(crate) data: PhantomData<D>,
-    pub(crate) filter: F,
+    pub(crate) filter: PhantomData<F>,
+    pub(crate) filter_value: V,
 }
 
-impl<'a, C, F> Query<'a, C, F> {
-    pub fn new(ecs: &'a crate::Ecs, filter: F) -> Query<'a, C, F> {
+impl<'a, C, F> Query<'a, C, F, ()> {
+    pub fn new(ecs: &'a crate::Ecs) -> Self {
         Self {
             ecs,
             data: PhantomData,
-            filter,
+            filter: PhantomData,
+            filter_value: (),
         }
     }
 }
 
-impl<'a, D, F> Query<'a, D, F>
+impl<'a, C, F, V> Query<'a, C, F, V> {
+    pub fn with_filter(ecs: &'a crate::Ecs, filter_value: V) -> Self {
+        Self {
+            ecs,
+            data: PhantomData,
+            filter: PhantomData,
+            filter_value,
+        }
+    }
+}
+
+impl<'a, D, F, V> Query<'a, D, F, V>
 where
     D: QueryData + 'a,
     F: QueryFilter,
+    V: QueryFilterValue,
 {
     pub fn iter(&self) -> impl Iterator<Item = D::Output<'a>> + 'a {
         self.try_iter().unwrap()
@@ -102,8 +116,11 @@ where
 
     #[tracing::instrument(level = "debug", skip_all)]
     fn as_sql_query(&self) -> ir::Query {
-        let filter =
-            ir::FilterExpression::and([D::filter_expression(), self.filter.filter_expression()]);
+        let filter = ir::FilterExpression::and([
+            D::filter_expression(),
+            F::filter_expression(),
+            self.filter_value.filter_expression(),
+        ]);
 
         trace!(?filter);
 
@@ -163,7 +180,7 @@ impl<C: Component> QueryData for C {
 }
 
 impl QueryFilter for () {
-    fn filter_expression(&self) -> ir::FilterExpression {
+    fn filter_expression() -> ir::FilterExpression {
         ir::FilterExpression::none()
     }
 }
@@ -193,13 +210,13 @@ impl<F: QueryFilter + Default> Default for Or<F> {
 }
 
 impl<C: Component> QueryFilter for C {
-    fn filter_expression(&self) -> ir::FilterExpression {
+    fn filter_expression() -> ir::FilterExpression {
         ir::FilterExpression::with_component(C::component_name())
     }
 }
 
 impl<C: Bundle> QueryFilter for AnyOf<C> {
-    fn filter_expression(&self) -> ir::FilterExpression {
+    fn filter_expression() -> ir::FilterExpression {
         ir::FilterExpression::or(
             C::component_names()
                 .into_iter()
@@ -209,28 +226,20 @@ impl<C: Bundle> QueryFilter for AnyOf<C> {
 }
 
 impl<C: Component> QueryFilter for With<C> {
-    fn filter_expression(&self) -> ir::FilterExpression {
+    fn filter_expression() -> ir::FilterExpression {
         ir::FilterExpression::with_component(C::component_name())
     }
 }
 
 impl<C: Component> QueryFilter for Without<C> {
-    fn filter_expression(&self) -> ir::FilterExpression {
+    fn filter_expression() -> ir::FilterExpression {
         ir::FilterExpression::without_component(C::component_name())
     }
 }
 
-pub(crate) struct FilterValueWrapper<F: Sized + QueryFilterValue>(pub(crate) F);
-
-impl<F: QueryFilterValue> QueryFilter for FilterValueWrapper<F> {
+impl QueryFilterValue for () {
     fn filter_expression(&self) -> ir::FilterExpression {
-        <F as QueryFilterValue>::filter_expression(&self.0)
-    }
-}
-
-impl<F: QueryFilterValue> From<F> for FilterValueWrapper<F> {
-    fn from(value: F) -> Self {
-        Self(value)
+        ir::FilterExpression::None
     }
 }
 
@@ -366,10 +375,9 @@ mod tuples {
             {
 
                 #[allow(non_snake_case)]
-                fn filter_expression(&self) -> ir::FilterExpression{
-                    let ($($ts,)+) = self;
+                fn filter_expression() -> ir::FilterExpression{
                     ir::FilterExpression::and([
-                        $($ts.filter_expression(),)+
+                        $(<$ts as QueryFilter>::filter_expression()),+
                     ])
                 }
             }
@@ -380,10 +388,9 @@ mod tuples {
             {
 
                 #[allow(non_snake_case)]
-                fn filter_expression(&self) -> ir::FilterExpression{
-                    let Or(($($ts,)+)) = self;
+                fn filter_expression() -> ir::FilterExpression{
                     ir::FilterExpression::or([
-                        $($ts.filter_expression(),)+
+                        $(<$ts as QueryFilter>::filter_expression()),+
                     ])
                 }
             }
@@ -393,7 +400,7 @@ mod tuples {
                 $($ts: Component,)+
             {
 
-                fn filter_expression(&self) -> ir::FilterExpression{
+                fn filter_expression() -> ir::FilterExpression{
                     ir::FilterExpression::and([
                         $(ir::FilterExpression::with_component($ts::component_name()),)+
                     ])
@@ -405,7 +412,7 @@ mod tuples {
                 $($ts: Component,)+
             {
 
-                fn filter_expression(&self) -> ir::FilterExpression{
+                fn filter_expression() -> ir::FilterExpression{
                     ir::FilterExpression::and([
                         $(ir::FilterExpression::without_component($ts::component_name()),)+
                     ])
