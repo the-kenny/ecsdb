@@ -15,10 +15,7 @@ pub fn main() -> Result<(), anyhow::Error> {
 
     ecs.new_entity().attach(Headline("My Note".into()));
 
-    for (entity, headline) in ecs
-        .query_filtered::<(Entity, Headline), Without<Date>>()
-        .into_iter()
-    {
+    for (entity, headline) in ecs.query::<(Entity, Headline), Without<Date>>().into_iter() {
         println!(
             "Entity '{}' (id={}) is missing component 'Date'",
             headline.0,

@@ -227,11 +227,12 @@ impl Ecs {
     }
 
     pub fn system_entities<'a>(&'a self) -> impl Iterator<Item = (String, Entity<'a>)> {
-        self.query::<(Entity, Name)>().map(|(e, name)| (name.0, e))
+        self.query::<(Entity, Name), ()>()
+            .map(|(e, name)| (name.0, e))
     }
 
     pub fn system_entity<'a>(&'a self, name: &str) -> Option<Entity<'a>> {
-        self.query::<(Entity, Name)>()
+        self.query::<(Entity, Name), ()>()
             .find_map(|(e, s)| (s.0 == name).then_some(e))
     }
     pub(crate) fn get_or_create_system_entity<'a>(&'a self, system: &str) -> Entity<'a> {
@@ -431,7 +432,7 @@ mod tests {
 
         db.run_system(system).unwrap();
 
-        assert!(db.query::<Seen>().next().is_some());
+        assert!(db.query::<Seen, ()>().next().is_some());
     }
 
     #[test]
@@ -448,6 +449,6 @@ mod tests {
 
         db.run_system(system).unwrap();
 
-        assert!(db.query::<Seen>().next().is_some());
+        assert!(db.query::<Seen, ()>().next().is_some());
     }
 }

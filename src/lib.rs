@@ -41,6 +41,8 @@ use std::path::Path;
 
 use tracing::{debug, instrument};
 
+use crate::query::QueryFilterValue;
+
 pub type EntityId = i64;
 
 #[derive(Debug, thiserror::Error)]
@@ -111,65 +113,49 @@ impl Ecs {
 }
 
 impl Ecs {
-    pub fn query<'a, D>(&'a self) -> impl Iterator<Item = D::Output<'a>> + 'a
+    pub fn query<'a, D, F>(&'a self) -> impl Iterator<Item = D::Output<'a>> + 'a
     where
         D: query::QueryData + 'a,
+        F: query::QueryFilter + 'a,
     {
-        self.try_query::<D>().unwrap()
+        self.try_query::<D, F>().unwrap()
     }
 
     #[instrument(name = "query", level = "debug", skip_all)]
-    pub fn try_query<'a, Q>(&'a self) -> Result<impl Iterator<Item = Q::Output<'a>> + 'a, Error>
-    where
-        Q: query::QueryData + 'a,
-    {
-        debug!(query = std::any::type_name::<Q>());
-        let query = query::Query::<Q>::new(self);
-        query.try_iter()
-    }
-
-    pub fn query_filtered<'a, D, F>(&'a self) -> impl Iterator<Item = D::Output<'a>> + 'a
+    pub fn try_query<'a, D, F>(&'a self) -> Result<impl Iterator<Item = D::Output<'a>> + 'a, Error>
     where
         D: query::QueryData + 'a,
         F: query::QueryFilter + 'a,
     {
-        self.try_query_filtered::<D, F>().unwrap()
-    }
-
-    #[instrument(name = "query_filtered", level = "debug", skip_all)]
-    pub fn try_query_filtered<'a, Q, F>(
-        &'a self,
-    ) -> Result<impl Iterator<Item = Q::Output<'a>> + 'a, Error>
-    where
-        F: query::QueryFilter + 'a,
-        Q: query::QueryData + 'a,
-    {
         debug!(
-            query = std::any::type_name::<Q>(),
+            data = std::any::type_name::<D>(),
             filter = std::any::type_name::<F>()
         );
-        let query = query::Query::<Q, F>::new(self);
+        let query = query::Query::<D, F>::new(self);
         query.try_iter()
     }
-}
 
-impl Ecs {
-    pub fn find<'a, V>(&'a self, filter: V) -> impl Iterator<Item = Entity<'a>> + 'a
+    pub fn query_filtered<'a, D, F>(
+        &'a self,
+        filter: impl QueryFilterValue,
+    ) -> impl Iterator<Item = D::Output<'a>> + 'a
     where
-        V: query::QueryFilterValue,
+        D: query::QueryData + 'a,
+        F: query::QueryFilter + 'a,
     {
-        self.try_find::<V>(filter).unwrap()
+        self.try_query_fitered::<D, F>(filter).unwrap()
     }
 
     #[instrument(name = "find", level = "debug", skip_all)]
-    pub fn try_find<'a, V>(
+    pub fn try_query_fitered<'a, D, F>(
         &'a self,
-        filter_value: V,
-    ) -> Result<impl Iterator<Item = Entity<'a>> + 'a, Error>
+        filter_value: impl query::QueryFilterValue,
+    ) -> Result<impl Iterator<Item = D::Output<'a>> + 'a, Error>
     where
-        V: query::QueryFilterValue,
+        D: query::QueryData + 'a,
+        F: query::QueryFilter + 'a,
     {
-        let query = query::Query::<Entity, (), _>::with_filter(self, filter_value);
+        let query = query::Query::<D, F, _>::with_filter(self, filter_value);
         query.try_iter()
     }
 }
@@ -487,33 +473,45 @@ mod tests {
     #[test]
     fn query_tuples() {
         let db = super::Ecs::open_in_memory().unwrap();
-        let _ = db.query::<MarkerComponent>();
-        let _ = db.query::<Entity>();
-        let _ = db.query::<(Entity, MarkerComponent)>();
+        let _: Vec<MarkerComponent> = db.query::<MarkerComponent, ()>().collect();
 
-        let _ = db.query_filtered::<Entity, With<MarkerComponent>>();
-        let _ = db.query_filtered::<Entity, Without<MarkerComponent>>();
-        let _ = db.query_filtered::<MarkerComponent, Or<(
-            Without<(MarkerComponent, MarkerComponent)>,
-            With<(MarkerComponent, MarkerComponent)>,
-            Or<(With<MarkerComponent>, Without<MarkerComponent>)>,
-        )>>();
-        let _ = db.query_filtered::<MarkerComponent, (
-            With<(MarkerComponent, ComponentWithData)>,
-            Without<(MarkerComponent, MarkerComponent)>,
-        )>();
-        let _ = db.query_filtered::<MarkerComponent, Without<ComponentWithData>>();
-        let _ = db.query_filtered::<MarkerComponent, Without<ComponentWithData>>();
-        let _ = db.query_filtered::<(), (
-            With<MarkerComponent>,
-            With<MarkerComponent>,
-            With<MarkerComponent>,
-            With<MarkerComponent>,
-            With<MarkerComponent>,
-            With<MarkerComponent>,
-            Without<MarkerComponent>,
-            With<MarkerComponent>,
-        )>();
+        let _: Vec<Entity> = db.query::<Entity, ()>().collect();
+        let _: Vec<(Entity, MarkerComponent)> =
+            db.query::<(Entity, MarkerComponent), ()>().collect();
+
+        let _: Vec<Entity> = db.query::<Entity, With<MarkerComponent>>().collect();
+        let _: Vec<Entity> = db.query::<Entity, Without<MarkerComponent>>().collect();
+        let _: Vec<MarkerComponent> = db
+            .query::<MarkerComponent, Or<(
+                Without<(MarkerComponent, MarkerComponent)>,
+                With<(MarkerComponent, MarkerComponent)>,
+                Or<(With<MarkerComponent>, Without<MarkerComponent>)>,
+            )>>()
+            .collect();
+
+        let _: Vec<MarkerComponent> = db
+            .query::<MarkerComponent, (
+                With<(MarkerComponent, ComponentWithData)>,
+                Without<(MarkerComponent, MarkerComponent)>,
+            )>()
+            .collect();
+
+        let _: Vec<MarkerComponent> = db
+            .query::<MarkerComponent, Without<ComponentWithData>>()
+            .collect();
+
+        let _: Vec<()> = db
+            .query::<(), (
+                With<MarkerComponent>,
+                With<MarkerComponent>,
+                With<MarkerComponent>,
+                With<MarkerComponent>,
+                With<MarkerComponent>,
+                With<MarkerComponent>,
+                Without<MarkerComponent>,
+                With<MarkerComponent>,
+            )>()
+            .collect();
     }
 
     #[test]
@@ -526,9 +524,9 @@ mod tests {
 
         db.new_entity().attach(ComponentWithData(1234));
 
-        assert_eq!(db.query::<()>().count(), 2);
-        assert_eq!(db.query::<MarkerComponent>().count(), 1);
-        assert_eq!(db.query::<MarkerComponent>().count(), 1);
+        assert_eq!(db.query::<EntityId, ()>().count(), 2);
+        assert_eq!(db.query::<EntityId, MarkerComponent>().count(), 1);
+        assert_eq!(db.query::<EntityId, MarkerComponent>().count(), 1);
     }
 
     #[test]
@@ -541,29 +539,27 @@ mod tests {
 
         db.new_entity().attach(ComponentWithData(1234));
 
+        assert_eq!(db.query::<EntityId, Without<MarkerComponent>>().count(), 1);
         assert_eq!(
-            db.query_filtered::<EntityId, Without<MarkerComponent>>()
+            db.query::<EntityId, (MarkerComponent, ComponentWithData)>()
                 .count(),
             1
         );
         assert_eq!(
-            db.query::<(MarkerComponent, ComponentWithData)>().count(),
-            1
-        );
-        assert_eq!(
-            db.query_filtered::<MarkerComponent, Without<MarkerComponent>>()
+            db.query::<MarkerComponent, Without<MarkerComponent>>()
                 .count(),
             0
         );
+
         assert_eq!(
-            db.query_filtered::<MarkerComponent, (
+            db.query::<MarkerComponent, (
                 Without<MarkerComponent>,
                 Or<(With<MarkerComponent>, With<ComponentWithData>)>
             )>()
             .count(),
             0
         );
-        assert_eq!(db.query::<ComponentWithData>().count(), 2);
+        assert_eq!(db.query::<EntityId, ComponentWithData>().count(), 2);
     }
 
     #[test]
@@ -574,23 +570,21 @@ mod tests {
         let c = db.new_entity().attach(C).id();
 
         assert_eq!(
-            db.query_filtered::<EntityId, Or<(With<A>, With<B>, With<C>)>>()
+            db.query::<EntityId, Or<(With<A>, With<B>, With<C>)>>()
                 .collect::<Vec<_>>(),
             vec![a, b, c]
         );
         assert_eq!(
-            db.query_filtered::<EntityId, Or<(With<A>, With<B>)>>()
+            db.query::<EntityId, Or<(With<A>, With<B>)>>()
                 .collect::<Vec<_>>(),
             vec![a, b]
         );
         assert_eq!(
-            db.query_filtered::<EntityId, Or<(With<A>,)>>()
-                .collect::<Vec<_>>(),
+            db.query::<EntityId, Or<(With<A>,)>>().collect::<Vec<_>>(),
             vec![a]
         );
         assert_eq!(
-            db.query_filtered::<EntityId, Or<(With<B>,)>>()
-                .collect::<Vec<_>>(),
+            db.query::<EntityId, Or<(With<B>,)>>().collect::<Vec<_>>(),
             vec![b]
         );
     }
@@ -603,45 +597,65 @@ mod tests {
         let c = db.new_entity().attach(C).id();
 
         assert_eq!(
-            db.query_filtered::<EntityId, AnyOf<(A, B)>>()
-                .collect::<Vec<_>>(),
+            db.query::<EntityId, AnyOf<(A, B)>>().collect::<Vec<_>>(),
             vec![a, b]
         );
 
         assert_eq!(
-            db.query_filtered::<EntityId, AnyOf<(A, C)>>()
-                .collect::<Vec<_>>(),
+            db.query::<EntityId, AnyOf<(A, C)>>().collect::<Vec<_>>(),
             vec![a, c]
         );
 
         assert_eq!(
-            db.query_filtered::<EntityId, AnyOf<(A,)>>()
-                .collect::<Vec<_>>(),
+            db.query::<EntityId, AnyOf<(A,)>>().collect::<Vec<_>>(),
             vec![a]
         );
     }
 
     #[test]
-    fn find() {
+    fn query_filtered() {
         let db = Ecs::open_in_memory().unwrap();
         let eid = db.new_entity().attach(ComponentWithData(123)).id();
         let _ = db.new_entity().attach(ComponentWithData(123));
         let _ = db.new_entity().attach(ComponentWithData(255));
 
-        assert_eq!(db.find(eid).count(), 1);
-        assert_eq!(db.find(eid).next().unwrap().id(), eid);
-        assert_eq!(db.find((eid, MarkerComponent)).count(), 0);
-        assert_eq!(db.find(MarkerComponent).count(), 0);
-        assert_eq!(db.find(ComponentWithData(0)).count(), 0);
-        assert_eq!(db.find(ComponentWithData(123)).count(), 2);
-        assert_eq!(db.find(ComponentWithData(255)).count(), 1);
+        assert_eq!(db.query_filtered::<EntityId, ()>(eid).count(), 1);
+        assert_eq!(
+            db.query_filtered::<EntityId, ()>(eid).collect::<Vec<_>>(),
+            vec![eid]
+        );
+        assert_eq!(
+            db.query_filtered::<EntityId, ()>((eid, MarkerComponent))
+                .count(),
+            0
+        );
+        assert_eq!(
+            db.query_filtered::<EntityId, ()>(MarkerComponent).count(),
+            0
+        );
+        assert_eq!(
+            db.query_filtered::<EntityId, ()>(ComponentWithData(0))
+                .count(),
+            0
+        );
+        assert_eq!(
+            db.query_filtered::<EntityId, ()>(ComponentWithData(123))
+                .count(),
+            2
+        );
+        assert_eq!(
+            db.query_filtered::<EntityId, ()>(ComponentWithData(255))
+                .count(),
+            1
+        );
 
         let _ = db
             .new_entity()
             .attach(MarkerComponent)
             .attach(ComponentWithData(12345));
         assert_eq!(
-            db.find((MarkerComponent, ComponentWithData(12345))).count(),
+            db.query_filtered::<EntityId, ()>((MarkerComponent, ComponentWithData(12345)))
+                .count(),
             1
         );
     }
@@ -654,19 +668,19 @@ mod tests {
         }
 
         let mut res = db
-            .find(ComponentWithData(0)..ComponentWithData(10))
+            .query_filtered::<Entity, ()>(ComponentWithData(0)..ComponentWithData(10))
             .map(|e| e.component::<ComponentWithData>().unwrap());
         assert_eq!(res.next(), Some(ComponentWithData(0)));
         assert_eq!(res.last(), Some(ComponentWithData(10)));
 
         let mut res = db
-            .find(ComponentWithData(10)..)
+            .query_filtered::<Entity, ()>(ComponentWithData(10)..)
             .map(|e| e.component::<ComponentWithData>().unwrap());
         assert_eq!(res.next(), Some(ComponentWithData(10)));
         assert_eq!(res.last(), Some(ComponentWithData(99)));
 
         let mut res = db
-            .find(..ComponentWithData(10))
+            .query_filtered::<Entity, ()>(..ComponentWithData(10))
             .map(|e| e.component::<ComponentWithData>().unwrap());
         assert_eq!(res.next(), Some(ComponentWithData(0)));
         assert_eq!(res.last(), Some(ComponentWithData(10)));

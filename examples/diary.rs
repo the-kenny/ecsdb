@@ -21,16 +21,16 @@ pub fn main() -> Result<(), anyhow::Error> {
 
     use ecsdb::query::*;
 
-    println!("Total: {} entities", db.query::<()>().count());
+    println!("Total: {} entities", db.query::<EntityId, ()>().count());
 
-    let _ = db.query_filtered::<Entity, (
+    let _ = db.query::<Entity, (
         With<(DiaryEntry, Contents)>,
         Without<Date>,
         Or<(With<DiaryEntry>, With<Contents>)>,
     )>();
 
     for (id, _, Date(date), Contents(contents)) in
-        db.query::<(EntityId, DiaryEntry, Date, Contents)>()
+        db.query::<(EntityId, DiaryEntry, Date, Contents), ()>()
     {
         println!("DiaryEntry",);
         println!("  id:\t{}", id);
