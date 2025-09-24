@@ -3,7 +3,7 @@ source: src/query/ir.rs
 description: "And([WithComponent(\"ecsdb::Foo\"), WithoutComponent(\"ecsdb::Bar\")]).simplify().sql_query()"
 ---
 SqlFragment<ecsdb::query::ir::Select> {
-    sql: "select distinct entity from components where (exists (select true from components c2 where c2.entity = components.entity and c2.component = :1) and not exists (select true from components c2 where c2.entity = components.entity and c2.component = :2))",
+    sql: "select distinct entity from components where ((select true from components c2 where c2.entity = components.entity and c2.component = :1) and (select true from components c2 where c2.entity = components.entity and c2.component = :2) is null)",
     placeholders: [
         (
             ":1",

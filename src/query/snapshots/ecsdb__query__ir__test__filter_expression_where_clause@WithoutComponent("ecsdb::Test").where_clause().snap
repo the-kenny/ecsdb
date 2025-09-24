@@ -3,7 +3,7 @@ source: src/query/ir.rs
 description: "WithoutComponent(\"ecsdb::Test\").where_clause()"
 ---
 SqlFragment<ecsdb::query::ir::Where> {
-    sql: "not exists (select true from components c2 where c2.entity = components.entity and c2.component = ?1)",
+    sql: "(select true from components c2 where c2.entity = components.entity and c2.component = ?1) is null",
     placeholders: [
         (
             "?1",

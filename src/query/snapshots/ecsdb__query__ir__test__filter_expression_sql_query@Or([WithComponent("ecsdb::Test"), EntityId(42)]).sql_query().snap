@@ -3,7 +3,7 @@ source: src/query/ir.rs
 description: "Or([WithComponent(\"ecsdb::Test\"), EntityId(42)]).sql_query()"
 ---
 SqlFragment<ecsdb::query::ir::Select> {
-    sql: "select distinct entity from components where (exists (select true from components c2 where c2.entity = components.entity and c2.component = :1) or entity = :2)",
+    sql: "select distinct entity from components where ((select true from components c2 where c2.entity = components.entity and c2.component = :1) or entity = :2)",
     placeholders: [
         (
             ":1",

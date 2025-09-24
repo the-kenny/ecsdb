@@ -152,14 +152,12 @@ impl FilterExpression {
             FilterExpression::None => SqlFragment::new("true", []),
 
             FilterExpression::WithComponent(c) => SqlFragment::new(
-                // "entity in (select entity from components where component = ?1)",
-                "exists (select true from components c2 where c2.entity = components.entity and c2.component = ?1)",
+                "(select true from components c2 where c2.entity = components.entity and c2.component = ?1)",
                 [("?1", Box::new(c.to_owned()) as _)],
             ),
 
             FilterExpression::WithoutComponent(c) => SqlFragment::new(
-                // "entity not in (select entity from components where component = ?1)",
-                "not exists (select true from components c2 where c2.entity = components.entity and c2.component = ?1)",
+                "(select true from components c2 where c2.entity = components.entity and c2.component = ?1) is null",
                 [("?1", Box::new(c.to_owned()) as _)],
             ),
 
@@ -170,14 +168,12 @@ impl FilterExpression {
             FilterExpression::WithComponentData(component, data) => {
                 if matches!(data, rusqlite::types::Value::Null) {
                     SqlFragment::new(
-                        // "entity in (select entity from components where component = ?1 and data is null)",
-                        "exists (select true from components c2 where c2.entity = components.entity and c2.component = ?1 and c2.data is null)",
+                        "(select true from components c2 where c2.entity = components.entity and c2.component = ?1 and c2.data is null)",
                         [("?1", Box::new(component.to_owned()) as _)],
                     )
                 } else {
                     SqlFragment::new(
-                        // "entity in (select entity from components where component = ?1 and data = ?2)",
-                        "exists (select true from components c2 where c2.entity = components.entity and c2.component = ?1 and c2.data = ?2)",
+                        "(select true from components c2 where c2.entity = components.entity and c2.component = ?1 and c2.data = ?2)",
                         [
                             ("?1", Box::new(component.to_owned()) as _),
                             ("?2", Box::new(data.to_owned()) as _),
@@ -220,8 +216,7 @@ impl FilterExpression {
                         ),
                 };
 
-                // let sql = format!("entity in (select entity from components where component = ?component and {range_filter_condition})");
-                let sql = format!("exists (select true from components c2 where c2.entity = components.entity and c2.component = ?component and {range_filter_condition})");
+                let sql = format!("(select true from components c2 where c2.entity = components.entity and c2.component = ?component and {range_filter_condition})");
                 params.push(("?component", Box::new(component.to_owned()) as _));
                 SqlFragment::new(&sql, params)
             }
