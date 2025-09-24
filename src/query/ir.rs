@@ -96,10 +96,16 @@ impl FilterExpression {
                         Or(exprs) => exprs,
                         other => vec![other],
                     })
-                    .map(Self::simplify)
-                    .collect();
+                    .map(Self::simplify);
 
-                Or(exprs)
+                let mut deduplicated = Vec::new();
+                for expr in exprs {
+                    if !deduplicated.contains(&expr) {
+                        deduplicated.push(expr)
+                    }
+                }
+
+                Or(deduplicated)
             }
             And(exprs) => {
                 let exprs = exprs
@@ -110,9 +116,16 @@ impl FilterExpression {
                         And(exprs) => exprs,
                         other => vec![other],
                     })
-                    .map(Self::simplify)
-                    .collect();
-                And(exprs)
+                    .map(Self::simplify);
+
+                let mut deduplicated = Vec::new();
+                for expr in exprs {
+                    if !deduplicated.contains(&expr) {
+                        deduplicated.push(expr)
+                    }
+                }
+
+                And(deduplicated)
             }
             other => other,
         }
@@ -348,10 +361,22 @@ mod test {
                 FilterExpression::entity(42),
             ]),
             FilterExpression::and([
+                FilterExpression::with_component("ecsdb::Test"),
+                FilterExpression::entity(42),
+                FilterExpression::with_component("ecsdb::Test"),
+                FilterExpression::entity(42),
+            ]),
+            FilterExpression::and([
                 FilterExpression::with_component("ecsdb::Foo"),
                 FilterExpression::without_component("ecsdb::Bar"),
             ]),
             FilterExpression::or([
+                FilterExpression::with_component("ecsdb::Test"),
+                FilterExpression::entity(42),
+            ]),
+            FilterExpression::or([
+                FilterExpression::with_component("ecsdb::Test"),
+                FilterExpression::entity(42),
                 FilterExpression::with_component("ecsdb::Test"),
                 FilterExpression::entity(42),
             ]),
