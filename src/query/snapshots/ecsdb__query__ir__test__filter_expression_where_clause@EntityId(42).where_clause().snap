@@ -7,7 +7,9 @@ SqlFragment<ecsdb::query::ir::Where> {
     placeholders: [
         (
             "?1",
-            <dyn ToSql>,
+            Integer(
+                42,
+            ),
         ),
     ],
 }

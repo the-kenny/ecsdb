@@ -7,7 +7,9 @@ SqlFragment<ecsdb::query::ir::Select> {
     placeholders: [
         (
             "?1",
-            <dyn ToSql>,
+            Text(
+                "ecsdb::Test",
+            ),
         ),
     ],
 }

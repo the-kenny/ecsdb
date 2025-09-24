@@ -7,11 +7,15 @@ SqlFragment<ecsdb::query::ir::Where> {
     placeholders: [
         (
             ":1",
-            <dyn ToSql>,
+            Text(
+                "ecsdb::Foo",
+            ),
         ),
         (
             ":2",
-            <dyn ToSql>,
+            Text(
+                "ecsdb::Bar",
+            ),
         ),
     ],
 }

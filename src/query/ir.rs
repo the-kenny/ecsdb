@@ -315,7 +315,16 @@ impl<T: std::fmt::Debug> std::fmt::Debug for SqlFragment<T> {
                 &self
                     .placeholders
                     .iter()
-                    .map(|(p, _v)| (p, format_args!("<dyn ToSql>")))
+                    .map(|(p, v)| {
+                        use rusqlite::types::{ToSqlOutput, Value};
+                        let v: Value = match v.to_sql().unwrap() {
+                            ToSqlOutput::Borrowed(v) => Value::from(v),
+                            ToSqlOutput::Owned(v) => v,
+                            other => unreachable!("Unexpected ToSqlOutput {other:?}"),
+                        };
+
+                        (p, v)
+                    })
                     .collect::<Vec<_>>(),
             )
             .finish()
