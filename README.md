@@ -144,4 +144,3 @@ schedule.tick(&ecs);
 - `schedule::After` runs one system after another finished
 - `schedule::Once` runs a system once per database
 - `schedule::Always` runs a system on every `Schedule::tick`
->>>>>>> Conflict 1 of 1 ends
