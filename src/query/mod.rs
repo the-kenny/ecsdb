@@ -249,6 +249,15 @@ impl QueryFilterValue for EntityId {
     }
 }
 
+#[derive(PartialEq, Eq, Debug)]
+pub struct ComponentName(pub String);
+
+impl QueryFilterValue for ComponentName {
+    fn filter_expression(&self) -> ir::FilterExpression {
+        ir::FilterExpression::WithComponent(self.0.clone())
+    }
+}
+
 impl<C: Component> QueryFilterValue for C {
     fn filter_expression(&self) -> ir::FilterExpression {
         use rusqlite::types::ToSqlOutput;
