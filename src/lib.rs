@@ -160,6 +160,22 @@ impl Ecs {
     }
 }
 
+impl Ecs {
+    pub fn find<'a>(
+        &'a self,
+        filter_value: impl query::QueryFilterValue,
+    ) -> impl Iterator<Item = Entity<'a>> + 'a {
+        self.try_find(filter_value).unwrap()
+    }
+
+    pub fn try_find<'a>(
+        &'a self,
+        filter_value: impl query::QueryFilterValue,
+    ) -> Result<impl Iterator<Item = Entity<'a>> + 'a, Error> {
+        self.try_query_fitered::<Entity<'a>, ()>(filter_value)
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct CreatedAt(pub chrono::DateTime<chrono::Utc>);
 
