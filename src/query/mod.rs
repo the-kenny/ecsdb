@@ -258,6 +258,12 @@ impl QueryFilterValue for ComponentName {
     }
 }
 
+impl<V: QueryFilterValue> QueryFilterValue for &[V] {
+    fn filter_expression(&self) -> ir::FilterExpression {
+        ir::FilterExpression::And(self.iter().map(V::filter_expression).collect())
+    }
+}
+
 impl<C: Component> QueryFilterValue for C {
     fn filter_expression(&self) -> ir::FilterExpression {
         use rusqlite::types::ToSqlOutput;
