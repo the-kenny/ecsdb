@@ -75,7 +75,7 @@ fn eval(commands: &Commands, db: &Ecs, line: &str) -> Result<(), CommandError> {
         return Ok(());
     };
 
-    command.execute(&db, &line)?;
+    command.execute(db, line)?;
 
     Ok(())
 }

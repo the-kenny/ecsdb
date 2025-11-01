@@ -12,7 +12,9 @@ pub mod component {
             todo!()
         }
 
-        pub fn from_rusqlite(value: &rusqlite::types::ToSqlOutput<'_>) -> Result<(), StorageError> {
+        pub fn from_rusqlite(
+            _value: &rusqlite::types::ToSqlOutput<'_>,
+        ) -> Result<(), StorageError> {
             todo!()
         }
     }
@@ -63,8 +65,9 @@ pub mod rusqlite {
 use crate as ecsdb;
 use ecsdb::component::Component;
 use ecsdb::resource::Resource;
-use ecsdb_derive::{Bundle, Component, Resource};
+use ecsdb_derive::{Component, Resource};
 
+#[allow(unused)]
 #[test]
 fn test_component() {
     #[derive(Component)]

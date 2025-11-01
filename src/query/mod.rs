@@ -219,7 +219,7 @@ impl<C: Bundle> QueryFilter for AnyOf<C> {
     fn filter_expression() -> ir::FilterExpression {
         ir::FilterExpression::or(
             C::component_names()
-                .into_iter()
+                .iter()
                 .map(|c| ir::FilterExpression::with_component(c)),
         )
     }

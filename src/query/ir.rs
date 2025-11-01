@@ -19,8 +19,11 @@ pub struct Query {
     pub order_by: OrderBy,
 }
 
+pub(crate) type Sql = String;
+pub(crate) type SqlParameters = Vec<(String, Box<dyn ToSql>)>;
+
 impl Query {
-    pub fn into_sql(self) -> (String, Vec<(String, Box<dyn ToSql>)>) {
+    pub(crate) fn into_sql(self) -> (Sql, SqlParameters) {
         let mut select = self.filter.simplify().sql_query();
         let order_by = match self.order_by {
             OrderBy::Asc => "order by entity asc",
@@ -227,7 +230,7 @@ impl FilterExpression {
     }
 
     fn combine_exprs(via: &str, exprs: &[FilterExpression]) -> SqlFragment<Where> {
-        let mut exprs = exprs.into_iter().map(|e| e.where_clause());
+        let mut exprs = exprs.iter().map(|e| e.where_clause());
 
         let Some(fragment) = exprs.next() else {
             return FilterExpression::None.where_clause();

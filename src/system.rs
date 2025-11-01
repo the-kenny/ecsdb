@@ -187,9 +187,7 @@ pub trait SystemParam: Sized {
 impl SystemParam for () {
     type Item<'world> = ();
 
-    fn get_param<'world>(_world: &'world Ecs, _system: &str) -> Self::Item<'world> {
-        ()
-    }
+    fn get_param<'world>(_world: &'world Ecs, _system: &str) -> Self::Item<'world> {}
 }
 
 impl Ecs {
@@ -214,7 +212,7 @@ impl Ecs {
 
         info!("Running");
 
-        if let Err(e) = system.run_system(&self) {
+        if let Err(e) = system.run_system(self) {
             error!(?e);
             return Err(e);
         }
@@ -236,7 +234,7 @@ impl Ecs {
             .find_map(|(e, s)| (s.0 == name).then_some(e))
     }
     pub(crate) fn get_or_create_system_entity<'a>(&'a self, system: &str) -> Entity<'a> {
-        self.system_entity(&system)
+        self.system_entity(system)
             .unwrap_or_else(|| self.new_entity().attach(Name(system.to_string())))
     }
 }

@@ -53,7 +53,7 @@ mod tests {
             |row| row.get(0),
         )?;
 
-        assert_eq!(result, true);
+        assert!(result);
 
         Ok(())
     }

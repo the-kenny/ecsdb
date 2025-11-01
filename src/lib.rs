@@ -72,7 +72,7 @@ impl Ecs {
         conn.execute_batch(include_str!("schema.sql"))?;
         conn.set_transaction_behavior(::rusqlite::TransactionBehavior::Immediate);
 
-        sqlite_ext::add_regexp_function(&mut conn)?;
+        sqlite_ext::add_regexp_function(&conn)?;
 
         Ok(Self {
             conn,
@@ -192,7 +192,7 @@ impl Ecs {
 
         let rows = entity_ids
             .into_iter()
-            .scan(self, |ecs, eid| Some(Entity::with_id(&ecs, eid)))
+            .scan(self, |ecs, eid| Some(Entity::with_id(ecs, eid)))
             .map(|e| {
                 debug!(
                     data = std::any::type_name::<Q>(),
@@ -233,7 +233,7 @@ impl Ecs {
     ) -> Result<impl Iterator<Item = Q::Output<'a>> + 'a, Error> {
         let rows = self
             .fetch_entity_ids_lazy(sql_query)?
-            .scan(self, |ecs, eid| Some(Entity::with_id(&ecs, eid)))
+            .scan(self, |ecs, eid| Some(Entity::with_id(ecs, eid)))
             .map(|e| {
                 debug!(
                     data = std::any::type_name::<Q>(),
@@ -766,14 +766,14 @@ mod tests {
         assert!(a.has::<A>());
         assert!(!a.has::<B>());
 
-        assert_eq!(a.has::<(A,)>(), true);
-        assert_eq!(a.has::<(A, B)>(), false);
-        assert_eq!(a.has::<(A, B, A)>(), false);
+        assert!(a.has::<(A,)>());
+        assert!(!a.has::<(A, B)>());
+        assert!(!a.has::<(A, B, A)>());
 
         let ab = db.new_entity().attach(A).attach(B);
-        assert_eq!(ab.has::<(A, B)>(), true);
-        assert_eq!(ab.has::<(A, A)>(), true);
-        assert_eq!(ab.has::<(A, B, A)>(), true);
+        assert!(ab.has::<(A, B)>());
+        assert!(ab.has::<(A, A)>());
+        assert!(ab.has::<(A, B, A)>());
     }
 
     #[test]
@@ -906,16 +906,18 @@ mod tests {
         #[derive(Component, Debug, Default, Deserialize, Serialize, PartialEq)]
         struct Foo(Vec<u64>);
 
-        assert!(ecs
-            .new_entity()
-            .try_modify_component(|_foo: &mut Foo| { Err(anyhow!("error")) })
-            .is_err());
+        assert!(
+            ecs.new_entity()
+                .try_modify_component(|_foo: &mut Foo| { Err(anyhow!("error")) })
+                .is_err()
+        );
 
-        assert!(ecs
-            .new_entity()
-            .attach(Foo(vec![1, 2, 3]))
-            .try_modify_component(|_foo: &mut Foo| { Err(anyhow!("error")) })
-            .is_err());
+        assert!(
+            ecs.new_entity()
+                .attach(Foo(vec![1, 2, 3]))
+                .try_modify_component(|_foo: &mut Foo| { Err(anyhow!("error")) })
+                .is_err()
+        );
 
         Ok(())
     }

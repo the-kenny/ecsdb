@@ -1,6 +1,6 @@
 use std::any::Any;
 
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 
 pub use ecsdb_derive::{Bundle, Component};
 
@@ -39,7 +39,7 @@ where
     fn to_rusqlite<'a>(
         component: &'a Self,
     ) -> Result<rusqlite::types::ToSqlOutput<'a>, StorageError> {
-        S::to_rusqlite(&component)
+        S::to_rusqlite(component)
     }
 }
 
@@ -56,9 +56,7 @@ where
     fn from_rusqlite(value: &rusqlite::types::ToSqlOutput<'_>) -> Result<C, StorageError> {
         let s = match value {
             rusqlite::types::ToSqlOutput::Borrowed(rusqlite::types::ValueRef::Text(s)) => s,
-            rusqlite::types::ToSqlOutput::Owned(rusqlite::types::Value::Text(ref s)) => {
-                s.as_bytes()
-            }
+            rusqlite::types::ToSqlOutput::Owned(rusqlite::types::Value::Text(s)) => s.as_bytes(),
             other => return Err(StorageError(format!("Unexpected type {other:?}"))),
         };
 
@@ -178,7 +176,7 @@ impl<C: Component> BundleComponent for C {
     const NAME: &'static str = C::NAME;
 
     fn to_rusqlite<'a>(&'a self) -> Result<Option<rusqlite::types::ToSqlOutput<'a>>, StorageError> {
-        Ok(Some(C::to_rusqlite(&self)?))
+        Ok(Some(C::to_rusqlite(self)?))
     }
 }
 
@@ -197,7 +195,7 @@ impl<C: Component> Bundle for C {
     const COMPONENTS: &'static [&'static str] = &[C::NAME];
 
     fn to_rusqlite<'a>(&'a self) -> Result<BundleData<'a>, StorageError> {
-        Ok(vec![(C::NAME, Some(C::to_rusqlite(&self)?))])
+        Ok(vec![(C::NAME, Some(C::to_rusqlite(self)?))])
     }
 }
 

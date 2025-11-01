@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use crate::{system, BoxedSystem, Ecs, IntoSystem, LastRun, System};
+use crate::{BoxedSystem, Ecs, IntoSystem, LastRun, System, system};
 
 use tracing::{debug, debug_span, instrument, warn};
 
@@ -29,12 +29,12 @@ impl Schedule {
         for (system, schedule) in self.0.iter() {
             let _span = debug_span!("system", name = %system.name()).entered();
 
-            let result = if schedule.should_run(&ecs, &system.name()) {
+            let result = if schedule.should_run(ecs, &system.name()) {
                 match ecs.run_dyn_system(system) {
                     Ok(()) => TickResult::Ok,
                     Err(e) => {
                         warn!(error = %e, "System failed");
-                        TickResult::Error(e.into())
+                        TickResult::Error(e)
                     }
                 }
             } else {
@@ -96,7 +96,7 @@ impl SchedulingMode for Every {
             .and_then(|e| e.component::<system::LastRun>())
             .map(|last_run| {
                 debug!(?last_run);
-                chrono::Utc::now().signed_duration_since(&last_run.0) > self.0
+                chrono::Utc::now().signed_duration_since(last_run.0) > self.0
             })
             .unwrap_or(true)
     }
@@ -162,7 +162,7 @@ mod test {
         macro_rules! defsys {
             ($sys:ident) => {
                 fn $sys(sys: SystemEntity<'_>) {
-                    sys.modify_component(|Count(ref mut c)| *c += 1);
+                    sys.modify_component(|Count(c)| *c += 1);
                 }
             };
         }
@@ -200,7 +200,7 @@ mod test {
     #[test]
     fn tick_results() {
         #[rustfmt::skip]
-        fn system_ok(sys: SystemEntity<'_>) { sys.modify_component(|Count(ref mut c)| *c += 1); }
+        fn system_ok(sys: SystemEntity<'_>) { sys.modify_component(|Count( c)| *c += 1); }
         #[rustfmt::skip]
         fn system_error(_sys: SystemEntity<'_>) -> Result<(), anyhow::Error> { Err(anyhow::anyhow!("Expected test error")) }
 
