@@ -1,10 +1,10 @@
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{OptionalExtension, params};
 use tracing::{debug, trace};
 
 use crate::{
+    Component, CreatedAt, DynComponent, Ecs, EntityId, Error, LastUpdated,
     component::Bundle,
     query::{self},
-    Component, CreatedAt, DynComponent, Ecs, EntityId, Error, LastUpdated,
 };
 
 #[derive(Debug, Copy, Clone)]
@@ -146,7 +146,7 @@ impl<'a> Entity<'a> {
             .conn
             .prepare_cached("select data from components where entity = ?1 and component = ?2")?;
 
-        let row = query
+        query
             .query_and_then(params![self.id(), name], |row| {
                 let data = row.get_ref("data")?;
                 Ok(T::from_rusqlite(&rusqlite::types::ToSqlOutput::Borrowed(
@@ -154,9 +154,7 @@ impl<'a> Entity<'a> {
                 ))?)
             })?
             .next()
-            .transpose();
-
-        row
+            .transpose()
     }
 }
 
@@ -171,7 +169,7 @@ impl<'a> Entity<'a> {
             .conn
             .prepare_cached("select data from components where entity = ?1 and component = ?2")?;
 
-        let row = query
+        query
             .query_and_then(params![self.id(), name], |row| {
                 let data = row.get("data")?;
                 Ok(DynComponent(
@@ -180,9 +178,7 @@ impl<'a> Entity<'a> {
                 ))
             })?
             .next()
-            .transpose();
-
-        row
+            .transpose()
     }
 }
 

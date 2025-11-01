@@ -23,7 +23,7 @@ impl Ecs {
         let mut query = self
             .conn
             .prepare_cached("select data from resources where name = ?1")?;
-        let row = query
+        query
             .query_and_then(params![name], |row| {
                 let data = row.get_ref("data")?;
                 Ok(R::from_rusqlite(&rusqlite::types::ToSqlOutput::Borrowed(
@@ -31,9 +31,7 @@ impl Ecs {
                 ))?)
             })?
             .next()
-            .transpose();
-
-        row
+            .transpose()
     }
 
     pub fn resource_mut<'a, R: Resource + Default>(&'a mut self) -> impl DerefMut<Target = R> + 'a {

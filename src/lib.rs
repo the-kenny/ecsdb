@@ -137,7 +137,7 @@ impl Ecs {
 
     pub fn query_filtered<'a, D, F>(
         &'a self,
-        filter: impl QueryFilterValue,
+        filter: impl QueryFilterValue + 'a,
     ) -> impl Iterator<Item = D::Output<'a>> + 'a
     where
         D: query::QueryData + 'a,
@@ -149,7 +149,7 @@ impl Ecs {
     #[instrument(name = "find", level = "debug", skip_all)]
     pub fn try_query_fitered<'a, D, F>(
         &'a self,
-        filter_value: impl query::QueryFilterValue,
+        filter_value: impl query::QueryFilterValue + 'a,
     ) -> Result<impl Iterator<Item = D::Output<'a>> + 'a, Error>
     where
         D: query::QueryData + 'a,
@@ -163,14 +163,14 @@ impl Ecs {
 impl Ecs {
     pub fn find<'a>(
         &'a self,
-        filter_value: impl query::QueryFilterValue,
+        filter_value: impl query::QueryFilterValue + 'a,
     ) -> impl Iterator<Item = Entity<'a>> + 'a {
         self.try_find(filter_value).unwrap()
     }
 
     pub fn try_find<'a>(
         &'a self,
-        filter_value: impl query::QueryFilterValue,
+        filter_value: impl query::QueryFilterValue + 'a,
     ) -> Result<impl Iterator<Item = Entity<'a>> + 'a, Error> {
         self.try_query_fitered::<Entity<'a>, ()>(filter_value)
     }

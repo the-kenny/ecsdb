@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, instrument};
 
-use crate::{self as ecsdb, query, Component, Ecs, Entity};
+use crate::{self as ecsdb, Component, Ecs, Entity, query};
 
 use core::marker::PhantomData;
 use std::{
@@ -317,7 +317,7 @@ mod tests {
     use std::marker::PhantomData;
 
     use crate::query::With;
-    use crate::{query, Ecs, Entity, IntoSystem, System, SystemEntity};
+    use crate::{Ecs, Entity, IntoSystem, System, SystemEntity, query};
 
     #[test]
     fn run_system() {

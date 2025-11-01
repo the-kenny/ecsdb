@@ -1,6 +1,6 @@
 use tracing::trace;
 
-use crate::{component::Bundle, Entity, EntityId};
+use crate::{Entity, EntityId, component::Bundle};
 
 use super::Component;
 use std::marker::PhantomData;
@@ -71,35 +71,39 @@ where
     F: QueryFilter,
     V: QueryFilterValue,
 {
-    pub fn iter(&self) -> impl Iterator<Item = D::Output<'a>> + 'a {
+    pub fn iter(&self) -> impl Iterator<Item = D::Output<'a>> + 'a + use<'a, D, F, V> {
         self.try_iter().unwrap()
     }
 
-    pub fn reverse_iter(&self) -> impl Iterator<Item = D::Output<'a>> + 'a {
+    pub fn reverse_iter(&self) -> impl Iterator<Item = D::Output<'a>> + 'a + use<'a, D, F, V> {
         self.try_reverse_iter().unwrap()
     }
 
-    pub fn entities(&self) -> impl Iterator<Item = Entity<'a>> + 'a {
+    pub fn entities(&self) -> impl Iterator<Item = Entity<'a>> + 'a + use<'a, D, F, V> {
         self.try_entities().unwrap()
     }
 
-    pub fn reverse_entities(&self) -> impl Iterator<Item = Entity<'a>> + 'a {
+    pub fn reverse_entities(&self) -> impl Iterator<Item = Entity<'a>> + 'a + use<'a, D, F, V> {
         self.try_reverse_entities().unwrap()
     }
 
-    pub fn try_iter(&self) -> Result<impl Iterator<Item = D::Output<'a>> + 'a, crate::Error> {
+    pub fn try_iter(
+        &self,
+    ) -> Result<impl Iterator<Item = D::Output<'a>> + 'a + use<'a, D, F, V>, crate::Error> {
         Ok(self.try_entities()?.filter_map(|e| D::from_entity(e)))
     }
 
     pub fn try_reverse_iter(
         &self,
-    ) -> Result<impl Iterator<Item = D::Output<'a>> + 'a, crate::Error> {
+    ) -> Result<impl Iterator<Item = D::Output<'a>> + 'a + use<'a, D, F, V>, crate::Error> {
         Ok(self
             .try_reverse_entities()?
             .filter_map(|e| D::from_entity(e)))
     }
 
-    pub fn try_entities(&self) -> Result<impl Iterator<Item = Entity<'a>> + 'a, crate::Error> {
+    pub fn try_entities(
+        &self,
+    ) -> Result<impl Iterator<Item = Entity<'a>> + 'a + use<'a, D, F, V>, crate::Error> {
         let mut query = self.as_sql_query();
 
         query.order_by = ir::OrderBy::Asc;
@@ -108,7 +112,7 @@ where
 
     pub fn try_reverse_entities(
         &self,
-    ) -> Result<impl Iterator<Item = Entity<'a>> + 'a, crate::Error> {
+    ) -> Result<impl Iterator<Item = Entity<'a>> + 'a + use<'a, D, F, V>, crate::Error> {
         let mut query = self.as_sql_query();
         query.order_by = ir::OrderBy::Desc;
         self.ecs.fetch::<Entity>(query)

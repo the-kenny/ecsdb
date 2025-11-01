@@ -2,7 +2,7 @@ extern crate proc_macro;
 
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{punctuated::Punctuated, Attribute, Data, Expr, Fields, Lit, Meta, Token};
+use syn::{Attribute, Data, Expr, Fields, Lit, Meta, Token, punctuated::Punctuated};
 
 #[proc_macro_derive(Component, attributes(component))]
 pub fn derive_component_fn(input: TokenStream) -> TokenStream {
@@ -79,13 +79,12 @@ fn impl_derive_resource(ast: &syn::DeriveInput) -> TokenStream {
 
     let component_derive: proc_macro2::TokenStream = impl_derive_component(ast).into();
 
-    let gen = quote! {
+    quote! {
         #component_derive
 
         impl ecsdb::resource::Resource for #name { }
-    };
-
-    gen.into()
+    }
+    .into()
 }
 
 fn impl_derive_bundle(ast: syn::DeriveInput) -> TokenStream {
