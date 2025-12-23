@@ -67,6 +67,13 @@ impl Ecs {
         Self::from_rusqlite(rusqlite::Connection::open(path)?)
     }
 
+    pub fn open_with_flags(
+        path: impl AsRef<Path>,
+        flags: rusqlite::OpenFlags,
+    ) -> Result<Self, Error> {
+        Self::from_rusqlite(rusqlite::Connection::open_with_flags(path, flags)?)
+    }
+
     pub fn from_rusqlite(mut conn: rusqlite::Connection) -> Result<Self, Error> {
         conn.pragma_update(None, "journal_mode", "wal")?;
         conn.execute_batch(include_str!("schema.sql"))?;
@@ -353,7 +360,7 @@ pub mod doctests {
     }
 
     #[cfg(doctest)]
-    #[doc = include_str!("../README.md")]
+    #[doc = include_str!("../../README.md")]
     pub struct ReadmeDoctests;
 }
 

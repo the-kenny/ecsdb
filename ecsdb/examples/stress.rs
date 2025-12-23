@@ -5,8 +5,6 @@ use serde::{Deserialize, Serialize};
 struct N(u64);
 
 pub fn main() -> Result<(), anyhow::Error> {
-    tracing_subscriber::fmt::init();
-
     let db = ecsdb::Ecs::open("stress.sqlite")?;
 
     let start = std::time::Instant::now();

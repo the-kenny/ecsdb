@@ -9,8 +9,6 @@ struct Contents(String);
 struct Date(chrono::NaiveDate);
 
 pub fn main() -> Result<(), anyhow::Error> {
-    tracing_subscriber::fmt::init();
-
     let db = ecsdb::Ecs::open("basic.sqlite")?;
 
     let _entry = db

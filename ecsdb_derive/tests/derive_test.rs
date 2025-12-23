@@ -1,4 +1,5 @@
 // Shims
+#[allow(clippy::result_unit_err)]
 pub mod component {
     use crate::rusqlite;
 
@@ -80,9 +81,9 @@ fn test_component() {
     #[component(storage = "blob")]
     struct Foo2(pub Vec<u8>);
 
-    impl Into<Vec<u8>> for Foo2 {
-        fn into(self) -> Vec<u8> {
-            self.0
+    impl From<Foo2> for Vec<u8> {
+        fn from(val: Foo2) -> Self {
+            val.0
         }
     }
 

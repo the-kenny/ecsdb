@@ -48,10 +48,10 @@ fn impl_derive_component(ast: &syn::DeriveInput) -> TokenStream {
 
     let mut attributes = extract_attributes(&ast.attrs);
 
-    if let Data::Struct(ref struc) = ast.data {
-        if matches!(struc.fields, Fields::Unit) {
-            attributes.storage = Storage::Null;
-        }
+    if let Data::Struct(ref struc) = ast.data
+        && matches!(struc.fields, Fields::Unit)
+    {
+        attributes.storage = Storage::Null;
     }
 
     let component_name = match attributes.name {
@@ -158,7 +158,7 @@ fn derive_bundle_for_struct(name: syn::Ident, struc: syn::DataStruct) -> TokenSt
 fn extract_attributes(attrs: &[Attribute]) -> Attributes {
     let mut attributes = Attributes::default();
 
-    if let Some(component_attribute) = attrs.into_iter().find(|a| a.path().is_ident("component")) {
+    if let Some(component_attribute) = attrs.iter().find(|a| a.path().is_ident("component")) {
         let nested = component_attribute
             .parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
             .unwrap();
@@ -166,22 +166,22 @@ fn extract_attributes(attrs: &[Attribute]) -> Attributes {
         for meta in nested {
             match meta {
                 Meta::NameValue(mnv) if mnv.path.is_ident("storage") => {
-                    if let Expr::Lit(expr_lit) = &mnv.value {
-                        if let Lit::Str(lit) = &expr_lit.lit {
-                            match lit.value().as_str() {
-                                "json" => attributes.storage = Storage::Json,
-                                "blob" => attributes.storage = Storage::Blob,
-                                other => panic!("storage {other} not supported"),
-                            }
+                    if let Expr::Lit(expr_lit) = &mnv.value
+                        && let Lit::Str(lit) = &expr_lit.lit
+                    {
+                        match lit.value().as_str() {
+                            "json" => attributes.storage = Storage::Json,
+                            "blob" => attributes.storage = Storage::Blob,
+                            other => panic!("storage {other} not supported"),
                         }
                     }
                 }
                 Meta::NameValue(mnv) if mnv.path.is_ident("name") => {
-                    if let Expr::Lit(expr_lit) = &mnv.value {
-                        if let Lit::Str(lit) = &expr_lit.lit {
-                            let custom_name = lit.value();
-                            attributes.name = Name::Custom(custom_name);
-                        }
+                    if let Expr::Lit(expr_lit) = &mnv.value
+                        && let Lit::Str(lit) = &expr_lit.lit
+                    {
+                        let custom_name = lit.value();
+                        attributes.name = Name::Custom(custom_name);
                     }
                 }
                 other => panic!(

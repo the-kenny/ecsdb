@@ -9,7 +9,7 @@ use std::{
     ops::Deref,
 };
 
-#[derive(Serialize, Deserialize, Component, Debug, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, Component, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Name(pub String);
 
 #[derive(Serialize, Deserialize, Component, Debug)]
@@ -309,6 +309,12 @@ impl AsRef<chrono::DateTime<chrono::Utc>> for LastRun {
 impl Borrow<chrono::DateTime<chrono::Utc>> for LastRun {
     fn borrow(&self) -> &chrono::DateTime<chrono::Utc> {
         &self.0
+    }
+}
+
+impl std::fmt::Display for Name {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
     }
 }
 
