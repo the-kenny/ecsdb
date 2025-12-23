@@ -1,3 +1,3 @@
 [workspace]
 resolver = "3"
-members = ["ecsdb", "ecsdb_web", "ecsdb_derive"]
+members = ["ecsdb", "ecsdb_derive", "ecsdb_cli", "ecsdb_web"]
