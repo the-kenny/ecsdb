@@ -41,9 +41,14 @@ pub fn main() -> Result<(), anyhow::Error> {
                 flags |= OpenFlags::SQLITE_OPEN_READ_ONLY;
             }
 
+            println!("Opening {}", path.display());
+
             ecsdb::Ecs::open_with_flags(path, flags)?
         }
-        None => ecsdb::Ecs::open_in_memory()?,
+        None => {
+            println!("Using in-memory database");
+            ecsdb::Ecs::open_in_memory()?
+        }
     };
 
     debug!("Opened DB");
