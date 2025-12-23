@@ -3,7 +3,7 @@ use std::{collections::BTreeSet, fmt::Display, path::PathBuf};
 use clap::*;
 use ecsdb::*;
 
-use tracing::{debug, warn};
+use tracing::{debug, error, info_span, warn};
 
 #[derive(clap::Parser, Debug)]
 struct Cli {
@@ -87,10 +87,11 @@ pub fn main() -> Result<(), anyhow::Error> {
     ];
 
     if let Some(command) = cli.command {
-        debug!(?command, "Executing");
+        let _span = info_span!("command", ?command).entered();
+
+        debug!("executing");
 
         eval(&COMMANDS, &db, &command)?;
-
         return Ok(());
     }
 
@@ -172,7 +173,7 @@ impl rustyline::hint::Hinter for CompletionHandler<'_> {
     }
 }
 
-fn eval(commands: &Commands, db: &Ecs, line: &str) -> CommandResult {
+fn eval(commands: &Commands, db: &Ecs, line: &str) -> Result<(), ecsdb::Error> {
     let Some(command) = line.split_whitespace().next() else {
         return Ok(());
     };
@@ -182,9 +183,18 @@ fn eval(commands: &Commands, db: &Ecs, line: &str) -> CommandResult {
         return Ok(());
     };
 
-    command.execute(db, line)?;
-
-    Ok(())
+    match command.execute(db, line) {
+        Ok(()) => Ok(()),
+        Err(CommandError::Database(error)) => {
+            error!(%error,"database error");
+            Err(error)
+        }
+        Err(CommandError::CommandFailed(error)) => {
+            warn!(%error, "Failed to execute command");
+            eprintln!("Execution failed: {error}");
+            Ok(())
+        }
+    }
 }
 
 pub type CommandResult = Result<(), CommandError>;
@@ -193,6 +203,9 @@ pub type CommandResult = Result<(), CommandError>;
 pub enum CommandError {
     #[error(transparent)]
     Database(#[from] ecsdb::Error),
+
+    #[error(transparent)]
+    CommandFailed(anyhow::Error),
 }
 
 trait Command: std::fmt::Debug {
@@ -337,7 +350,7 @@ impl Command for SqliteExecute {
 
     fn execute(&self, db: &Ecs, input: &str) -> CommandResult {
         let sql = input.trim_start_matches(self.name()).trim();
-        Self::run(db.raw_sql(), sql).map_err(ecsdb::Error::from)?;
+        Self::run(db.raw_sql(), sql).map_err(|e| CommandError::CommandFailed(e.into()))?;
         Ok(())
     }
 }
