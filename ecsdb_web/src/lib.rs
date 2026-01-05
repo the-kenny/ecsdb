@@ -1,67 +1,78 @@
-use std::{
-    convert::Infallible,
-    fmt::{Debug, Display},
-    marker::PhantomData,
-    path::PathBuf,
-    str::FromStr,
-};
+use axum::http::StatusCode;
+use ecsdb::EntityId;
+use tower::Service as _;
+use tower_http::ServiceExt as _;
+use tracing::debug;
 
-use axum::{
-    Router,
-    extract::{self},
-    http::StatusCode,
-    response::{Html, IntoResponse},
-    routing::get,
-};
-use ecsdb::{Component, Entity, EntityId};
-use http::Response;
-use http_body_util::{BodyExt, Full};
-use serde::{Deserialize, Serialize};
-use serde_json::json;
-use tracing::{debug, info};
-
-use std::{
-    future::Future,
-    pin::Pin,
-    task::{Context, Poll},
-};
+use std::task::{Context, Poll};
 
 use futures_util::future::BoxFuture;
-use http::{Method, Request};
+use http::Method;
 
 // mod list;
 // use list::list;
 
 // mod htmx;
-//  use htmx::HtmxTemplate;
+// use htmx::HtmxTemplate;
 
-//  fn entity_handler(request: http::Request<Full<Bytes>>) -> Response<Full<Bytes>> {
-//     todo!()
-// }
-
-#[derive(Debug, Deserialize)]
-struct Input {
-    name: String,
-}
-
-#[derive(Debug, Serialize)]
-struct Output {
-    message: String,
-}
-
-#[derive(Clone, Default)]
-pub struct Service;
-
-// type RequestBody = Full<bytes::Bytes>;
-type ResponseBody = Full<bytes::Bytes>;
-type Error = String;
-
-impl<RequestBody> tower::Service<Request<RequestBody>> for Service
+pub fn service<RequestBody, DbFun>(
+    open_db: DbFun,
+) -> impl tower::Service<
+    http::Request<RequestBody>,
+    Response = http::Response<ResponseBody>,
+    Error = Error,
+    Future = impl Future<Output = Result<http::Response<ResponseBody>, Error>>,
+> + Clone
 where
     RequestBody: http_body::Body + Send + 'static,
     RequestBody::Data: Send,
+    DbFun:
+        Fn(&http::Request<RequestBody>) -> Result<ecsdb::Ecs, ecsdb::Error> + Send + Copy + 'static,
 {
-    type Response = Response<ResponseBody>;
+    tower::ServiceBuilder::new().service_fn(move |request: http::Request<RequestBody>| {
+        let is_hx_request = request
+            .headers()
+            .get("HX-Request")
+            .is_some_and(|h| h.to_str().is_ok_and(|v| v == "true"));
+        let is_hx_boosted = request
+            .headers()
+            .get("HX-Boosted")
+            .is_some_and(|h| h.to_str().is_ok_and(|v| v == "true"));
+
+        let is_htmx_request = is_hx_request && !is_hx_boosted;
+
+        let service = Service { open_db };
+        service
+            .map_response_body(move |markup| {
+                let markup = if is_htmx_request {
+                    markup
+                } else {
+                    pages::wrap_in_body(markup)
+                };
+
+                ResponseBody::from(markup.into_string())
+            })
+            .call(request)
+    })
+}
+
+#[derive(Clone, Default)]
+struct Service<DbFun> {
+    open_db: DbFun,
+}
+
+type ResponseBody = String;
+// type Response = http::Response<ResponseBody>;
+type Error = String;
+
+impl<RequestBody, DbFun> tower::Service<http::Request<RequestBody>> for Service<DbFun>
+where
+    DbFun:
+        Fn(&http::Request<RequestBody>) -> Result<ecsdb::Ecs, ecsdb::Error> + Send + Copy + 'static,
+    RequestBody: http_body::Body + Send + 'static,
+    RequestBody::Data: Send,
+{
+    type Response = http::Response<maud::Markup>;
     type Error = Error;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
@@ -69,66 +80,80 @@ where
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, req: Request<RequestBody>) -> Self::Future {
+    fn call(&mut self, req: http::Request<RequestBody>) -> Self::Future {
+        let open_db = self.open_db;
+
         Box::pin(async move {
             debug!(method = ?req.method(), path = ?req.uri().path());
 
-            match (req.method(), req.uri().path()) {
-                (&Method::GET, "/") => {
-                    let body = json_response(Output {
-                        message: "Hello from GET".into(),
-                    });
+            let db = tokio::task::block_in_place(|| open_db(&req)).map_err(|e| e.to_string())?;
 
-                    Ok(body)
+            let url = url::Url::parse("http://localhost")
+                .unwrap()
+                .join(&req.uri().to_string())
+                .map_err(|e| e.to_string())?;
+            let path_components: Box<[&str]> =
+                url.path_segments().map(|s| s.collect()).unwrap_or_default();
+
+            match (req.method(), path_components.iter().as_slice()) {
+                (&Method::GET, &["entities", entity_id]) => {
+                    let Ok(entity_id) = str::parse::<EntityId>(entity_id) else {
+                        return Err(format!("Invalid eid {entity_id}"));
+                    };
+
+                    let entity = db.entity(entity_id);
+                    Ok(html_response(pages::entity(entity)))
                 }
 
-                (&Method::POST, "/") => {
-                    let bytes = req
-                        .into_body()
-                        .collect()
-                        .await
-                        .map_err(|_e| Error::from("unreachable"))?;
-
-                    let input: Input = serde_json::from_slice(&bytes.to_bytes()).unwrap_or(Input {
-                        name: "unknown".into(),
-                    });
-
-                    let body = json_response(Output {
-                        message: format!("Hello, {}", input.name),
-                    });
-
-                    Ok(body)
-                }
-
-                _ => Ok(Response::builder()
+                _ => Ok(http::Response::builder()
                     .status(StatusCode::NOT_FOUND)
-                    .body(ResponseBody::new(bytes::Bytes::new()))
+                    .body(maud::html!({}))
                     .unwrap()),
             }
         })
     }
 }
 
-/// Helper to build JSON responses
-fn json_response<T: Serialize>(value: T) -> Response<ResponseBody> {
-    let json = serde_json::to_vec(&value).unwrap();
-
-    Response::builder()
+fn html_response(markup: maud::Markup) -> http::Response<maud::Markup> {
+    http::Response::builder()
         .status(StatusCode::OK)
-        .header("content-type", "application/json")
-        .body(ResponseBody::from(json))
+        .header("content-type", "text/html")
+        .body(markup)
         .unwrap()
 }
 
-fn entity_context(entity: Entity) -> serde_json::Value {
-    let last_modified = entity.last_modified();
+mod pages {
+    use maud::{Markup, html};
+    pub fn entity(entity: ecsdb::Entity) -> Markup {
+        html!({
+            table {
+                tr {
+                    td { "eid" }
+                    td {
+                        (entity.id())
+                    }
+                }
+                tr {
+                    td { "Components" }
+                    td {
+                        @for name in entity.component_names() {
+                            (name)
+                        }
+                    }
+                }
+            }
+        })
+    }
 
-    json!({
-        "id": entity.id(),
-        "last_modified": last_modified,
-        "links": {
+    pub fn wrap_in_body(contents: Markup) -> Markup {
+        html! {
+            html {
+                body {
+                    (contents)
+                }
+            }
         }
-    })
+    }
 }
 
 // struct GenericListTemplate;
