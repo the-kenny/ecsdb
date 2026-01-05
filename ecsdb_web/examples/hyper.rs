@@ -14,13 +14,14 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let listener = TcpListener::bind(addr).await?;
     info!("Listening on http://{}", addr);
     loop {
-        let service = ecsdb_web::Service;
+        let service = ecsdb_web::service(|_req: &http::Request<_>| ecsdb::Ecs::open_in_memory());
         let service = tower::ServiceBuilder::new().service(service);
 
         let service = hyper_util::service::TowerToHyperService::new(service);
 
         let (tcp, _) = listener.accept().await?;
         let io = hyper_util::rt::TokioIo::new(tcp);
+
         tokio::task::spawn(async move {
             if let Err(err) = http1::Builder::new()
                 .timer(hyper_util::rt::TokioTimer::new())
