@@ -1,5 +1,6 @@
 use axum::http::StatusCode;
-use ecsdb::EntityId;
+use ecsdb::{Component, EntityId};
+use serde::{Deserialize, Serialize};
 use tower::Service as _;
 use tower_http::ServiceExt as _;
 use tracing::debug;
@@ -8,6 +9,15 @@ use std::task::{Context, Poll};
 
 use futures_util::future::BoxFuture;
 use http::Method;
+
+#[derive(Serialize, Deserialize, Component, Debug)]
+pub struct LastAccess(pub chrono::DateTime<chrono::Utc>);
+
+impl LastAccess {
+    pub fn now() -> Self {
+        Self(chrono::Utc::now())
+    }
+}
 
 // mod list;
 // use list::list;
@@ -102,6 +112,7 @@ where
                     };
 
                     let entity = db.entity(entity_id);
+                    entity.attach(LastAccess::now());
                     Ok(html_response(pages::entity(entity)))
                 }
 
