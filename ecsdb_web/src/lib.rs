@@ -106,6 +106,14 @@ where
                 url.path_segments().map(|s| s.collect()).unwrap_or_default();
 
             match (req.method(), path_components.iter().as_slice()) {
+                (_, components) if components.last().is_some_and(|last| last.is_empty()) => {
+                    Ok(http::Response::builder()
+                        .status(http::StatusCode::SEE_OTHER)
+                        .header(http::header::LOCATION, url.path().trim_end_matches('/'))
+                        .body(maud::html!({}))
+                        .unwrap())
+                }
+
                 (&Method::GET, &["entities", entity_id]) => {
                     let Ok(entity_id) = str::parse::<EntityId>(entity_id) else {
                         return Err(format!("Invalid eid {entity_id}"));
