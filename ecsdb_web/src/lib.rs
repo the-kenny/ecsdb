@@ -114,6 +114,11 @@ where
                         .unwrap())
                 }
 
+                (&Method::GET, &["entities"]) => {
+                    let entities = db.query::<ecsdb::Entity, ()>();
+                    Ok(html_response(pages::entities(entities)))
+                }
+
                 (&Method::GET, &["entities", entity_id]) => {
                     let Ok(entity_id) = str::parse::<EntityId>(entity_id) else {
                         return Err(format!("Invalid eid {entity_id}"));
@@ -148,15 +153,43 @@ mod pages {
             table {
                 tr {
                     td { "eid" }
-                    td {
-                        (entity.id())
-                    }
+                    td { (entity.id()) }
                 }
+                    @for name in entity.component_names() {
+                        @let component = entity.dyn_component(&name).unwrap();
+                        tr {
+                            td { (name) }
+                            td {
+                                pre {
+                                    (component.as_json().map(|j| j.to_string()).unwrap_or_else(|| "<unrenderable>".to_string()))
+                                }
+                            }
+                        }
+                    }
+            }
+        })
+    }
+
+    pub fn entities<'a>(entities: impl IntoIterator<Item = ecsdb::Entity<'a>>) -> Markup {
+        html!({
+            table {
                 tr {
-                    td { "Components" }
-                    td {
-                        @for name in entity.component_names() {
-                            (name)
+                    th { "EntityId" }
+                    th { "Components" }
+                }
+                @for entity in entities.into_iter() {
+                    tr {
+                        td {
+                            a href=(format!("entities/{}", entity.id())) {
+                                (entity.id())
+                            }
+                        }
+                        td {
+                            pre {
+                                @for name in entity.component_names() {
+                                    (name) ", "
+                                }
+                            }
                         }
                     }
                 }
