@@ -200,6 +200,9 @@ mod pages {
     pub fn wrap_in_body(contents: Markup) -> Markup {
         html! {
             html {
+                head {
+                    link rel="stylesheet" href="pico.min.css" {}
+                }
                 body {
                     (contents)
                 }
