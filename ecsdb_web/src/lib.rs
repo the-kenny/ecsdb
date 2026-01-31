@@ -1,13 +1,12 @@
-use axum::http::StatusCode;
-use ecsdb::{Component, EntityId};
+use std::convert::Infallible;
+
+use ecsdb::{Component, Ecs, EntityId};
+use http::StatusCode;
+
 use serde::{Deserialize, Serialize};
-use tower::Service as _;
-use tower_http::ServiceExt as _;
-use tracing::debug;
+use tower::service_fn;
 
-use std::task::{Context, Poll};
-
-use futures_util::future::BoxFuture;
+use futures_util::{FutureExt, TryFutureExt};
 use http::Method;
 
 #[derive(Serialize, Deserialize, Component, Debug)]
@@ -25,25 +24,64 @@ impl LastAccess {
 // mod htmx;
 // use htmx::HtmxTemplate;
 
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("Invalid request '{0} {1}")]
+    InvalidRequest(Method, String),
+    #[error("Invalid EntityId {0:?}")]
+    InvalidEntityId(String),
+    #[error(transparent)]
+    Ecs(#[from] ecsdb::Error),
+
+    #[error(transparent)]
+    Other(Box<dyn std::error::Error + Send + Sync>),
+}
+
+impl Error {
+    pub fn into_response(self) -> http::Response<ResponseBody> {
+        let status = match &self {
+            Error::InvalidRequest(_, _) => StatusCode::BAD_REQUEST,
+            Error::InvalidEntityId(_) => StatusCode::BAD_REQUEST,
+            Error::Ecs(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Error::Other(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+
+        http::Response::builder()
+            .status(status)
+            .body(self.to_string().into())
+            .unwrap()
+    }
+}
+
 pub fn service<RequestBody, DbFun>(
     open_db: DbFun,
 ) -> impl tower::Service<
     http::Request<RequestBody>,
     Response = http::Response<ResponseBody>,
-    Error = Error,
-    Future = impl Future<Output = Result<http::Response<ResponseBody>, Error>>,
+    Error = Infallible,
+    Future = impl Future<Output = Result<http::Response<ResponseBody>, Infallible>>,
 > + Clone
 where
     RequestBody: http_body::Body + Send + 'static,
-    RequestBody::Data: Send,
-    DbFun:
-        Fn(&http::Request<RequestBody>) -> Result<ecsdb::Ecs, ecsdb::Error> + Send + Copy + 'static,
+    DbFun: Fn(&http::Request<RequestBody>) -> Result<ecsdb::Ecs, ecsdb::Error>
+        + Send
+        + Sync
+        + Copy
+        + 'static,
 {
-    tower::ServiceBuilder::new().service_fn(move |request: http::Request<RequestBody>| {
+    async fn ecs_service<RB, DbFun>(
+        open_db: DbFun,
+        request: http::Request<RB>,
+    ) -> Result<http::Response<ResponseBody>, Error>
+    where
+        DbFun: Fn(&http::Request<RB>) -> Result<ecsdb::Ecs, ecsdb::Error>,
+        RB: http_body::Body,
+    {
         let is_hx_request = request
             .headers()
             .get("HX-Request")
             .is_some_and(|h| h.to_str().is_ok_and(|v| v == "true"));
+
         let is_hx_boosted = request
             .headers()
             .get("HX-Boosted")
@@ -51,90 +89,97 @@ where
 
         let is_htmx_request = is_hx_request && !is_hx_boosted;
 
-        let service = Service { open_db };
-        service
-            .map_response_body(move |markup| {
-                let markup = if is_htmx_request {
-                    markup
-                } else {
-                    pages::wrap_in_body(markup)
-                };
+        let db = open_db(&request)?;
+        let kind = RequestType::from_request(request)?;
 
-                ResponseBody::from(markup.into_string())
-            })
-            .call(request)
+        let interaction = EcsInteraction { db, kind };
+
+        Ok(interaction.handle().await?.map(|markup| {
+            let markup = if is_htmx_request {
+                markup
+            } else {
+                pages::wrap_in_body(markup)
+            };
+            ResponseBody::from(markup.into_string())
+        }))
+    }
+
+    async fn pico_css_service<RB>(_req: http::Request<RB>) -> http::Response<ResponseBody>
+    where
+        RB: http_body::Body,
+    {
+        static CSS: &[u8] = include_bytes!("pico.min.css");
+        http::Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "text/css")
+            .body(ResponseBody::from(CSS))
+            .unwrap()
+    }
+
+    service_fn(move |req: http::Request<RequestBody>| {
+        match (req.method(), req.uri().path()) {
+            (&Method::GET, path) if path.ends_with("/pico.min.css") => {
+                pico_css_service(req).boxed()
+            }
+            _ => ecs_service(open_db, req)
+                .unwrap_or_else(|e| e.into_response())
+                .boxed(),
+        }
+        .map(Ok)
     })
 }
 
-#[derive(Clone, Default)]
-struct Service<DbFun> {
-    open_db: DbFun,
+type ResponseBody = http_body_util::Full<bytes::Bytes>;
+// type Response = http::Response<ResponseBody>;
+
+struct EcsInteraction {
+    db: Ecs,
+    kind: RequestType,
 }
 
-type ResponseBody = String;
-// type Response = http::Response<ResponseBody>;
-type Error = String;
+pub enum RequestType {
+    Entities,
+    Entity(EntityId),
+}
 
-impl<RequestBody, DbFun> tower::Service<http::Request<RequestBody>> for Service<DbFun>
-where
-    DbFun:
-        Fn(&http::Request<RequestBody>) -> Result<ecsdb::Ecs, ecsdb::Error> + Send + Copy + 'static,
-    RequestBody: http_body::Body + Send + 'static,
-    RequestBody::Data: Send,
-{
-    type Response = http::Response<maud::Markup>;
-    type Error = Error;
-    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
+impl RequestType {
+    fn from_request<RB: http_body::Body>(req: http::Request<RB>) -> Result<Self, Error> {
+        let url = url::Url::parse("http://localhost")
+            .unwrap()
+            .join(&req.uri().to_string())
+            .unwrap();
+        let path_components: Box<[&str]> =
+            url.path_segments().map(|s| s.collect()).unwrap_or_default();
 
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
+        match (req.method(), path_components.iter().as_slice()) {
+            (&Method::GET, &["entities"]) => Ok(Self::Entities),
 
-    fn call(&mut self, req: http::Request<RequestBody>) -> Self::Future {
-        let open_db = self.open_db;
+            (&Method::GET, &["entities", entity_id]) => {
+                let Ok(entity_id) = str::parse::<EntityId>(entity_id) else {
+                    return Err(Error::InvalidEntityId(entity_id.into()));
+                };
 
-        Box::pin(async move {
-            debug!(method = ?req.method(), path = ?req.uri().path());
-
-            let db = tokio::task::block_in_place(|| open_db(&req)).map_err(|e| e.to_string())?;
-
-            let url = url::Url::parse("http://localhost")
-                .unwrap()
-                .join(&req.uri().to_string())
-                .map_err(|e| e.to_string())?;
-            let path_components: Box<[&str]> =
-                url.path_segments().map(|s| s.collect()).unwrap_or_default();
-
-            match (req.method(), path_components.iter().as_slice()) {
-                (_, components) if components.last().is_some_and(|last| last.is_empty()) => {
-                    Ok(http::Response::builder()
-                        .status(http::StatusCode::SEE_OTHER)
-                        .header(http::header::LOCATION, url.path().trim_end_matches('/'))
-                        .body(maud::html!({}))
-                        .unwrap())
-                }
-
-                (&Method::GET, &["entities"]) => {
-                    let entities = db.query::<ecsdb::Entity, ()>();
-                    Ok(html_response(pages::entities(entities)))
-                }
-
-                (&Method::GET, &["entities", entity_id]) => {
-                    let Ok(entity_id) = str::parse::<EntityId>(entity_id) else {
-                        return Err(format!("Invalid eid {entity_id}"));
-                    };
-
-                    let entity = db.entity(entity_id);
-                    entity.attach(LastAccess::now());
-                    Ok(html_response(pages::entity(entity)))
-                }
-
-                _ => Ok(http::Response::builder()
-                    .status(StatusCode::NOT_FOUND)
-                    .body(maud::html!({}))
-                    .unwrap()),
+                Ok(Self::Entity(entity_id))
             }
-        })
+
+            (method, path) => Err(Error::InvalidRequest(method.to_owned(), path.join("/"))),
+        }
+    }
+}
+
+impl EcsInteraction {
+    async fn handle(self) -> Result<http::Response<maud::Markup>, Error> {
+        match self.kind {
+            RequestType::Entities => {
+                let entities = self.db.query::<ecsdb::Entity, ()>();
+                Ok(html_response(pages::entities(entities)))
+            }
+            RequestType::Entity(eid) => {
+                let entity = self.db.entity(eid);
+                entity.attach(LastAccess::now());
+                Ok(html_response(pages::entity(entity)))
+            }
+        }
     }
 }
 
