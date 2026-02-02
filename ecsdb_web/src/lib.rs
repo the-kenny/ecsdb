@@ -222,14 +222,10 @@ mod pages {
     pub fn entity(entity: ecsdb::Entity) -> Markup {
         html!({
             table {
-                tr {
-                    td { "eid" }
-                    td { (entity.id()) }
-                }
                     @for name in entity.component_names() {
                         @let component = entity.dyn_component(&name).unwrap();
                         tr {
-                            td { (name) }
+                            td { pre { (name) } }
                             td {
                                 pre {
                                     (component.as_json().map(|j| j.to_string()).unwrap_or_else(|| "<unrenderable>".to_string()))
@@ -252,7 +248,7 @@ mod pages {
                     tr {
                         td {
                             a href=(format!("entities/{}", entity.id())) {
-                                (entity.id())
+                                pre { (entity.id()) }
                             }
                         }
                         td {
@@ -273,6 +269,7 @@ mod pages {
             html {
                 head {
                     link rel="stylesheet" href="missing.css" {}
+                    script src="htmx.js" r#type="application/javascript" {}
                 }
                 body {
                     main {
