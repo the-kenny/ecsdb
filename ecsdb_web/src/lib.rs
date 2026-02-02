@@ -1,8 +1,9 @@
-use std::convert::Infallible;
+use std::{collections::HashMap, convert::Infallible};
 
 use ecsdb::{Component, Ecs, EntityId};
 use http::StatusCode;
 
+use http_body_util::BodyExt;
 use serde::{Deserialize, Serialize};
 use tower::service_fn;
 
@@ -104,28 +105,53 @@ where
         }))
     }
 
-    async fn pico_css_service<RB>(_req: http::Request<RB>) -> http::Response<ResponseBody>
-    where
-        RB: http_body::Body,
-    {
-        static CSS: &[u8] = include_bytes!("pico.min.css");
-        http::Response::builder()
-            .status(StatusCode::OK)
-            .header("content-type", "text/css")
-            .body(ResponseBody::from(CSS))
-            .unwrap()
+    macro_rules! include_assets {
+        ([ $( ($asset:literal, $content_type:literal) ),* ] ) => {{
+            let mut assets = HashMap::new();
+                $(
+                    assets.insert($asset, {
+                        static ASSET: &[u8] = include_bytes!($asset);
+                        http::Response::builder()
+                            .status(StatusCode::OK)
+                            .header("content-type", $content_type)
+                            .body(ResponseBody::from(ASSET))
+                            .unwrap()
+                    });
+                )*
+                assets
+
+        }};
     }
 
+    let assets = include_assets!([
+        ("missing.css", "text/css"),
+        ("htmx.js", "application/javascript")
+    ]);
+
+    // async fn static_asset_service<RB>(
+    //     assets: &HashMap<&str, http::Response<ResponseBody>>,
+    //     req: http::Request<RB>,
+    // ) -> http::Response<ResponseBody>
+    // where
+    //     RB: http_body::Body,
+    // {
+
+    // }
+
     service_fn(move |req: http::Request<RequestBody>| {
-        match (req.method(), req.uri().path()) {
-            (&Method::GET, path) if path.ends_with("/pico.min.css") => {
-                pico_css_service(req).boxed()
-            }
-            _ => ecs_service(open_db, req)
+        // static_asset_service(req)
+        let response = if req.method() == Method::GET
+            && let Some(last_path_element) = req.uri().path().rsplit('/').next()
+            && let Some(asset) = assets.get(last_path_element)
+        {
+            Box::pin(futures_util::future::ready(asset.clone()))
+        } else {
+            ecs_service(open_db, req)
                 .unwrap_or_else(|e| e.into_response())
-                .boxed(),
-        }
-        .map(Ok)
+                .boxed()
+        };
+
+        response.map(Ok)
     })
 }
 
@@ -246,10 +272,12 @@ mod pages {
         html! {
             html {
                 head {
-                    link rel="stylesheet" href="pico.min.css" {}
+                    link rel="stylesheet" href="missing.css" {}
                 }
                 body {
-                    (contents)
+                    main {
+                        (contents)
+                    }
                 }
             }
         }
