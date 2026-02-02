@@ -3,12 +3,13 @@ use std::{collections::HashMap, convert::Infallible};
 use ecsdb::{Component, Ecs, EntityId};
 use http::StatusCode;
 
-use http_body_util::BodyExt;
 use serde::{Deserialize, Serialize};
-use tower::service_fn;
+use tower::{ServiceBuilder, service_fn};
 
 use futures_util::{FutureExt, TryFutureExt};
 use http::Method;
+use tower_http::ServiceExt;
+use tracing::{debug, instrument};
 
 #[derive(Serialize, Deserialize, Component, Debug)]
 pub struct LastAccess(pub chrono::DateTime<chrono::Utc>);
@@ -128,17 +129,7 @@ where
         ("htmx.js", "application/javascript")
     ]);
 
-    // async fn static_asset_service<RB>(
-    //     assets: &HashMap<&str, http::Response<ResponseBody>>,
-    //     req: http::Request<RB>,
-    // ) -> http::Response<ResponseBody>
-    // where
-    //     RB: http_body::Body,
-    // {
-
-    // }
-
-    service_fn(move |req: http::Request<RequestBody>| {
+    let service = service_fn(move |req: http::Request<RequestBody>| {
         // static_asset_service(req)
         let response = if req.method() == Method::GET
             && let Some(last_path_element) = req.uri().path().rsplit('/').next()
@@ -152,7 +143,9 @@ where
         };
 
         response.map(Ok)
-    })
+    });
+
+    ServiceBuilder::new().service(service).trim_trailing_slash()
 }
 
 type ResponseBody = http_body_util::Full<bytes::Bytes>;
@@ -163,19 +156,24 @@ struct EcsInteraction {
     kind: RequestType,
 }
 
+#[derive(Debug)]
 pub enum RequestType {
     Entities,
     Entity(EntityId),
 }
 
 impl RequestType {
+    #[instrument(level = "debug", ret, skip_all, fields(request.url = %req.uri()))]
     fn from_request<RB: http_body::Body>(req: http::Request<RB>) -> Result<Self, Error> {
         let url = url::Url::parse("http://localhost")
             .unwrap()
             .join(&req.uri().to_string())
             .unwrap();
+
         let path_components: Box<[&str]> =
             url.path_segments().map(|s| s.collect()).unwrap_or_default();
+
+        debug!(?path_components);
 
         match (req.method(), path_components.iter().as_slice()) {
             (&Method::GET, &["entities"]) => Ok(Self::Entities),
