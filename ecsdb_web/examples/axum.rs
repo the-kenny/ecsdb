@@ -8,13 +8,14 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     tracing_subscriber::fmt::init();
     use axum::Router;
 
-    let service =
-        ecsdb_web::service(|_req: &http::Request<_>| ecsdb::Ecs::open("scratch/test.sqlite"));
+    let service = ecsdb_web::service("/ecsdb/", |_req: &http::Request<_>| {
+        ecsdb::Ecs::open("scratch/test.sqlite")
+    });
     let service = tower::ServiceBuilder::new().service(service);
 
     let app = Router::new()
         .route("/test", get("test route"))
-        .fallback_service(service);
+        .nest_service("/ecsdb", service);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
     info!("listening on {}", addr);

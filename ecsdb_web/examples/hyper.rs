@@ -14,8 +14,9 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let listener = TcpListener::bind(addr).await?;
     info!("Listening on http://{}", addr);
     loop {
-        let service =
-            ecsdb_web::service(|_req: &http::Request<_>| ecsdb::Ecs::open("scratch/test.sqlite"));
+        let service = ecsdb_web::service("/", |_req: &http::Request<_>| {
+            ecsdb::Ecs::open("scratch/test.sqlite")
+        });
         let service = tower::ServiceBuilder::new().service(service);
 
         let service = hyper_util::service::TowerToHyperService::new(service);

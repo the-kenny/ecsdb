@@ -1,4 +1,4 @@
-use std::{collections::HashMap, convert::Infallible};
+use std::{borrow::Cow, collections::HashMap, convert::Infallible};
 
 use ecsdb::{Component, Ecs, EntityId};
 use http::StatusCode;
@@ -56,6 +56,7 @@ impl Error {
 }
 
 pub fn service<RequestBody, DbFun>(
+    base_path: &str,
     open_db: DbFun,
 ) -> impl tower::Service<
     http::Request<RequestBody>,
@@ -71,7 +72,20 @@ where
         + Copy
         + 'static,
 {
+    let base_uri = http::Uri::try_from(
+        {
+            if base_path.ends_with('/') {
+                Cow::Borrowed(base_path)
+            } else {
+                Cow::Owned(format!("{base_path}/"))
+            }
+        }
+        .as_bytes(),
+    )
+    .unwrap();
+
     async fn ecs_service<RB, DbFun>(
+        base_url: http::Uri,
         open_db: DbFun,
         request: http::Request<RB>,
     ) -> Result<http::Response<ResponseBody>, Error>
@@ -100,7 +114,7 @@ where
             let markup = if is_htmx_request {
                 markup
             } else {
-                pages::wrap_in_body(markup)
+                pages::wrap_in_body(&base_url, markup)
             };
             ResponseBody::from(markup.into_string())
         }))
@@ -130,14 +144,13 @@ where
     ]);
 
     let service = service_fn(move |req: http::Request<RequestBody>| {
-        // static_asset_service(req)
         let response = if req.method() == Method::GET
             && let Some(last_path_element) = req.uri().path().rsplit('/').next()
             && let Some(asset) = assets.get(last_path_element)
         {
             Box::pin(futures_util::future::ready(asset.clone()))
         } else {
-            ecs_service(open_db, req)
+            ecs_service(base_uri.clone(), open_db, req)
                 .unwrap_or_else(|e| e.into_response())
                 .boxed()
         };
@@ -269,12 +282,13 @@ mod pages {
         html!({ "not found" })
     }
 
-    pub fn wrap_in_body(contents: Markup) -> Markup {
+    pub fn wrap_in_body(base_url: &http::Uri, contents: Markup) -> Markup {
         html! {
             html {
                 head {
                     link rel="stylesheet" href="missing.css" {}
                     script src="htmx.js" r#type="application/javascript" {}
+                    base href=(base_url) { }
                 }
                 body {
                     main {
