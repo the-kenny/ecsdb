@@ -199,7 +199,10 @@ impl EcsInteraction {
                 Ok(html_response(pages::entities(entities)))
             }
             RequestType::Entity(eid) => {
-                let entity = self.db.entity(eid);
+                let Some(entity) = self.db.find(eid).next() else {
+                    return Ok(html_response(pages::not_found()));
+                };
+
                 entity.attach(LastAccess::now());
                 Ok(html_response(pages::entity(entity)))
             }
@@ -260,6 +263,10 @@ mod pages {
                 }
             }
         })
+    }
+
+    pub fn not_found() -> Markup {
+        html!({ "not found" })
     }
 
     pub fn wrap_in_body(contents: Markup) -> Markup {
