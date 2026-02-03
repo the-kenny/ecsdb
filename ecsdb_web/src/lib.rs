@@ -124,7 +124,8 @@ where
                 let markup = if is_htmx_request {
                     markup
                 } else {
-                    pages::wrap_in_body(&base_url, markup)
+                    let breadcrumbs = kind.breadcrumbs();
+                    pages::wrap_in_body(&base_url, &breadcrumbs, markup)
                 };
 
                 http::Response::builder()
@@ -205,6 +206,11 @@ pub enum RequestType {
     },
 }
 
+struct Breadcrumb {
+    title: String,
+    path: Option<iri::PathBuf>,
+}
+
 impl RequestType {
     #[instrument(level = "debug", ret, skip_all, fields(request.url = %req.uri()))]
     async fn from_request<RB>(req: http::Request<RB>) -> Result<Self, Error>
@@ -280,6 +286,50 @@ impl RequestType {
             (method, path) => Err(Error::InvalidRequest(method.to_owned(), path.join("/"))),
         }
     }
+
+    fn breadcrumbs(&self) -> Vec<Breadcrumb> {
+        let mut breadcrumbs = vec![Breadcrumb {
+            title: "Entities".into(),
+            path: Some(iri::PathBuf::new("entities".into()).expect("Valid iri::PathBuf")),
+        }];
+
+        fn add(breadcrumbs: &mut Vec<Breadcrumb>, title: &str, subpath: &[&str]) {
+            let mut path = breadcrumbs
+                .iter()
+                .rfind(|b| b.path.is_some())
+                .and_then(|b| b.path.to_owned())
+                .unwrap(); // SAFETY: There is at least one entry with a path (the root)
+
+            path.normalize();
+
+            for element in subpath {
+                path.symbolic_push(iri::Segment::new(element).expect("Valid iri::Segment"));
+            }
+            breadcrumbs.push(Breadcrumb {
+                title: title.into(),
+                path: Some(path),
+            })
+        }
+
+        match self {
+            RequestType::Entities => (),
+            RequestType::Entity(eid) => {
+                let eid = eid.to_string();
+                add(&mut breadcrumbs, &eid, &[&eid]);
+            }
+            RequestType::Component {
+                entity_id,
+                component,
+            } => {
+                let entity_id = entity_id.to_string();
+                add(&mut breadcrumbs, &entity_id, &[&entity_id]);
+                add(&mut breadcrumbs, component, &["components", component]);
+            }
+            RequestType::ModifyComponent { .. } => unreachable!(),
+        };
+
+        breadcrumbs
+    }
 }
 
 enum EcsResponse {
@@ -343,13 +393,19 @@ impl RequestType {
 
 mod pages {
     use maud::{Markup, html};
+
+    use crate::Breadcrumb;
     pub fn entity(entity: ecsdb::Entity) -> Markup {
         html!({
             table {
                     @for name in entity.component_names() {
                         @let component = entity.dyn_component(&name).unwrap();
                         tr {
-                            td { pre { (name) } }
+                            td {
+                                a href=(format!("entities/{}/components/{}", entity.id(), name)) {
+                                    pre { (name) }
+                                }
+                            }
                             td {
                                 pre {
                                     (component.as_json().map(|j| j.to_string()).unwrap_or_else(|| "<unrenderable>".to_string()))
@@ -416,7 +472,11 @@ mod pages {
         html!({ "not found" })
     }
 
-    pub fn wrap_in_body(base_url: &http::Uri, contents: Markup) -> Markup {
+    pub fn wrap_in_body(
+        base_url: &http::Uri,
+        breadcrumbs: &[Breadcrumb],
+        contents: Markup,
+    ) -> Markup {
         html! {
             html {
                 head {
@@ -425,6 +485,18 @@ mod pages {
                     base href=(base_url) { }
                 }
                 body {
+                    header {
+                        nav.breadcrumbs aria-label="Breadcrumbs" {
+                            ul role="list" {
+                                @for (n, breadcrumb) in (breadcrumbs.iter().enumerate()) {
+                                    @let is_last = n == breadcrumbs.len()-1;
+                                    li.inline aria-current=[is_last.then_some("page")] {
+                                        a href=[breadcrumb.path.clone()] { (breadcrumb.title) }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     main {
                         (contents)
                     }
