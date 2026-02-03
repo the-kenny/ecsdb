@@ -1,6 +1,6 @@
 use tracing::warn;
 
-use crate::{component, Component};
+use crate::{Component, component};
 
 #[derive(Debug)]
 pub struct DynComponent<'a>(
@@ -47,5 +47,16 @@ impl<'a> DynComponent<'a> {
                 None
             }
         }
+    }
+
+    pub fn from_json(
+        name: &'a str,
+        value: &serde_json::Value,
+    ) -> Result<Self, component::StorageError> {
+        let value = serde_json::to_string(value).expect("Serializable JSON");
+        Ok(Self(
+            name,
+            rusqlite::types::ToSqlOutput::Owned(rusqlite::types::Value::Text(value)),
+        ))
     }
 }
