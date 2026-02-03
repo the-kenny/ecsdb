@@ -191,7 +191,6 @@ where
 
 type ResponseBody = http_body_util::Full<bytes::Bytes>;
 
-#[derive(Debug)]
 pub enum RequestType {
     Entities,
     Entity(EntityId),
@@ -338,6 +337,7 @@ enum EcsResponse {
 }
 
 impl RequestType {
+    #[instrument(level = "debug", skip(db), ret)]
     async fn handle(&self, db: ecsdb::Ecs) -> Result<EcsResponse, Error> {
         match *self {
             RequestType::Entities => {
@@ -502,6 +502,42 @@ mod pages {
                     }
                 }
             }
+        }
+    }
+}
+
+impl std::fmt::Debug for EcsResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Markup(_markup) => f.debug_tuple("Markup").field(&"<html>").finish(),
+            Self::Redirect(path) => f.debug_tuple("Redirect").field(path).finish(),
+        }
+    }
+}
+
+impl std::fmt::Debug for RequestType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Entities => write!(f, "Entities"),
+            Self::Entity(arg0) => f.debug_tuple("Entity").field(arg0).finish(),
+            Self::Component {
+                entity_id,
+                component,
+            } => f
+                .debug_tuple("Component")
+                .field(entity_id)
+                .field(&format_args!("{component}"))
+                .finish(),
+            Self::ModifyComponent {
+                entity_id,
+                component,
+                value: _,
+            } => f
+                .debug_tuple("ModifyComponent")
+                .field(entity_id)
+                .field(&format_args!("{component}"))
+                .field(&format_args!("<redacted>"))
+                .finish(),
         }
     }
 }
