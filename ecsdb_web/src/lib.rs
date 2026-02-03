@@ -1,15 +1,19 @@
 use std::{borrow::Cow, collections::HashMap, convert::Infallible};
 
+use bytes::Bytes;
 use ecsdb::{Component, Ecs, EntityId};
-use http::StatusCode;
+use http::{StatusCode, header};
 
+use http_body_util::BodyExt as _;
 use serde::{Deserialize, Serialize};
 use tower::{ServiceBuilder, service_fn};
 
-use futures_util::{FutureExt, TryFutureExt};
+use futures_util::{FutureExt, TryFutureExt, TryStreamExt};
 use http::Method;
 use tower_http::ServiceExt;
 use tracing::{debug, instrument};
+
+use crate::pages::not_found;
 
 #[derive(Serialize, Deserialize, Component, Debug)]
 pub struct LastAccess(pub chrono::DateTime<chrono::Utc>);
@@ -30,10 +34,15 @@ impl LastAccess {
 pub enum Error {
     #[error("Invalid request '{0} {1}")]
     InvalidRequest(Method, String),
+
     #[error("Invalid EntityId {0:?}")]
     InvalidEntityId(String),
+
     #[error(transparent)]
     Ecs(#[from] ecsdb::Error),
+
+    #[error("Invalid component data {0:?}")]
+    InvalidComponentData(String),
 
     #[error(transparent)]
     Other(Box<dyn std::error::Error + Send + Sync>),
@@ -45,6 +54,7 @@ impl Error {
             Error::InvalidRequest(_, _) => StatusCode::BAD_REQUEST,
             Error::InvalidEntityId(_) => StatusCode::BAD_REQUEST,
             Error::Ecs(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Error::InvalidComponentData(_) => StatusCode::BAD_REQUEST,
             Error::Other(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
 
@@ -65,12 +75,13 @@ pub fn service<RequestBody, DbFun>(
     Future = impl Future<Output = Result<http::Response<ResponseBody>, Infallible>>,
 > + Clone
 where
-    RequestBody: http_body::Body + Send + 'static,
+    RequestBody: http_body::Body<Data = Bytes> + Send + 'static + Unpin,
     DbFun: Fn(&http::Request<RequestBody>) -> Result<ecsdb::Ecs, ecsdb::Error>
         + Send
         + Sync
         + Copy
         + 'static,
+    <RequestBody as http_body::Body>::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
     let base_uri = http::Uri::try_from(
         {
@@ -91,7 +102,8 @@ where
     ) -> Result<http::Response<ResponseBody>, Error>
     where
         DbFun: Fn(&http::Request<RB>) -> Result<ecsdb::Ecs, ecsdb::Error>,
-        RB: http_body::Body,
+        RB: http_body::Body<Data = Bytes> + Unpin,
+        RB::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
     {
         let is_hx_request = request
             .headers()
@@ -106,7 +118,7 @@ where
         let is_htmx_request = is_hx_request && !is_hx_boosted;
 
         let db = open_db(&request)?;
-        let kind = RequestType::from_request(request)?;
+        let kind = RequestType::from_request(request).await?;
 
         let interaction = EcsInteraction { db, kind };
 
@@ -173,11 +185,24 @@ struct EcsInteraction {
 pub enum RequestType {
     Entities,
     Entity(EntityId),
+    Component {
+        entity_id: EntityId,
+        component: String,
+    },
+    ModifyComponent {
+        entity_id: EntityId,
+        component: String,
+        value: serde_json::Value,
+    },
 }
 
 impl RequestType {
     #[instrument(level = "debug", ret, skip_all, fields(request.url = %req.uri()))]
-    fn from_request<RB: http_body::Body>(req: http::Request<RB>) -> Result<Self, Error> {
+    async fn from_request<RB>(req: http::Request<RB>) -> Result<Self, Error>
+    where
+        RB: http_body::Body<Data = Bytes> + Unpin,
+        RB::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+    {
         let url = url::Url::parse("http://localhost")
             .unwrap()
             .join(&req.uri().to_string())
@@ -199,6 +224,50 @@ impl RequestType {
                 Ok(Self::Entity(entity_id))
             }
 
+            (&Method::GET, &["entities", entity_id, "components", component]) => {
+                let Ok(entity_id) = str::parse::<EntityId>(entity_id) else {
+                    return Err(Error::InvalidEntityId(entity_id.into()));
+                };
+
+                Ok(Self::Component {
+                    entity_id,
+                    component: component.to_owned(),
+                })
+            }
+
+            (&Method::POST, &["entities", entity_id, "components", component]) => {
+                #[derive(Deserialize)]
+                struct FormData {
+                    #[serde(rename = "component_data")]
+                    value: serde_json::Value,
+                }
+
+                let Ok(entity_id) = str::parse::<EntityId>(entity_id) else {
+                    return Err(Error::InvalidEntityId(entity_id.into()));
+                };
+
+                let (_req, body) = req.into_parts();
+
+                let form_data = tokio::task::block_in_place(|| {
+                    let byte_stream = body
+                        .into_data_stream()
+                        .map_err(|e| std::io::Error::other(e.into()));
+
+                    let reader = tokio_util::io::StreamReader::new(byte_stream);
+                    let sync_reader = tokio_util::io::SyncIoBridge::new(reader);
+                    serde_urlencoded::from_reader::<FormData, _>(sync_reader)
+                });
+
+                match form_data {
+                    Ok(FormData { value }) => Ok(Self::ModifyComponent {
+                        entity_id,
+                        component: component.to_owned(),
+                        value,
+                    }),
+                    Err(e) => Err(Error::InvalidComponentData(e.to_string())),
+                }
+            }
+
             (method, path) => Err(Error::InvalidRequest(method.to_owned(), path.join("/"))),
         }
     }
@@ -218,6 +287,41 @@ impl EcsInteraction {
 
                 entity.attach(LastAccess::now());
                 Ok(html_response(pages::entity(entity)))
+            }
+            RequestType::Component {
+                entity_id: entity,
+                component,
+            } => {
+                let Some(entity) = self.db.find(entity).next() else {
+                    return Ok(html_response(pages::not_found()));
+                };
+
+                entity.attach(LastAccess::now());
+                Ok(html_response(pages::component_editor(entity, &component)))
+            }
+            RequestType::ModifyComponent {
+                entity_id,
+                component,
+                value,
+            } => {
+                let Some(entity) = self.db.find(entity_id).next() else {
+                    return Ok(html_response(not_found()));
+                };
+
+                let target = format!("entities/{entity_id}/components/{component}");
+
+                let component = match ecsdb::DynComponent::from_json(&component, &value) {
+                    Ok(c) => c,
+                    Err(e) => todo!("{e:?}"),
+                };
+
+                entity.attach(LastAccess::now()).dyn_attach(component);
+
+                Ok(http::Response::builder()
+                    .status(StatusCode::SEE_OTHER)
+                    .header(header::LOCATION, &target)
+                    .body(maud::html!(a href=(target) { "See Other" }))
+                    .unwrap())
             }
         }
     }
@@ -276,6 +380,30 @@ mod pages {
                 }
             }
         })
+    }
+
+    pub fn component_editor(entity: ecsdb::Entity, component_name: &str) -> Markup {
+        let Some(component) = entity.dyn_component(component_name) else {
+            return not_found();
+        };
+
+        let Some(component_json) = component.as_json() else {
+            return not_found();
+        };
+
+        let json = serde_json::to_string_pretty(&component_json).expect("component -> json");
+
+        html! {
+            h2 { (format!("Editing {component_name} of {entity}")) }
+            form method="post" {
+                pre {
+                    textarea name="component_data" class="width:100%" rows=(json.lines().count()) {
+                        (json)
+                    }
+                }
+                input type="submit" {}
+            }
+        }
     }
 
     pub fn not_found() -> Markup {
