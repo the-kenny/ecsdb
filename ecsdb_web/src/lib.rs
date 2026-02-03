@@ -1,10 +1,11 @@
 use std::{borrow::Cow, collections::HashMap, convert::Infallible};
 
 use bytes::Bytes;
-use ecsdb::{Component, Ecs, EntityId};
+use ecsdb::{Component, EntityId};
 use http::{StatusCode, header};
 
 use http_body_util::BodyExt as _;
+use iref::iri;
 use serde::{Deserialize, Serialize};
 use tower::{ServiceBuilder, service_fn};
 
@@ -12,8 +13,6 @@ use futures_util::{FutureExt, TryFutureExt, TryStreamExt};
 use http::Method;
 use tower_http::ServiceExt;
 use tracing::{debug, instrument};
-
-use crate::pages::not_found;
 
 #[derive(Serialize, Deserialize, Component, Debug)]
 pub struct LastAccess(pub chrono::DateTime<chrono::Utc>);
@@ -120,16 +119,32 @@ where
         let db = open_db(&request)?;
         let kind = RequestType::from_request(request).await?;
 
-        let interaction = EcsInteraction { db, kind };
+        match kind.handle(db).await? {
+            EcsResponse::Markup(markup) => {
+                let markup = if is_htmx_request {
+                    markup
+                } else {
+                    pages::wrap_in_body(&base_url, markup)
+                };
 
-        Ok(interaction.handle().await?.map(|markup| {
-            let markup = if is_htmx_request {
-                markup
-            } else {
-                pages::wrap_in_body(&base_url, markup)
-            };
-            ResponseBody::from(markup.into_string())
-        }))
+                http::Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "text/html")
+                    .body(ResponseBody::from(markup.into_string()))
+                    .map_err(|e| Error::Other(Box::new(e)))
+            }
+            EcsResponse::Redirect(path) => {
+                // Prepent base url to our redirect target
+                let mut base = iri::PathBuf::new(base_url.path().to_owned()).unwrap();
+                base.symbolic_append(path.segments());
+
+                http::Response::builder()
+                    .status(StatusCode::SEE_OTHER)
+                    .header(header::LOCATION, base.as_str())
+                    .body(ResponseBody::new(Bytes::new()))
+                    .map_err(|e| Error::Other(Box::new(e)))
+            }
+        }
     }
 
     macro_rules! include_assets {
@@ -174,12 +189,6 @@ where
 }
 
 type ResponseBody = http_body_util::Full<bytes::Bytes>;
-// type Response = http::Response<ResponseBody>;
-
-struct EcsInteraction {
-    db: Ecs,
-    kind: RequestType,
-}
 
 #[derive(Debug)]
 pub enum RequestType {
@@ -273,66 +282,63 @@ impl RequestType {
     }
 }
 
-impl EcsInteraction {
-    async fn handle(self) -> Result<http::Response<maud::Markup>, Error> {
-        match self.kind {
+enum EcsResponse {
+    Markup(maud::Markup),
+    Redirect(iri::PathBuf),
+}
+
+impl RequestType {
+    async fn handle(&self, db: ecsdb::Ecs) -> Result<EcsResponse, Error> {
+        match *self {
             RequestType::Entities => {
-                let entities = self.db.query::<ecsdb::Entity, ()>();
-                Ok(html_response(pages::entities(entities)))
+                let entities = db.query::<ecsdb::Entity, ()>();
+                Ok(EcsResponse::Markup(pages::entities(entities)))
             }
             RequestType::Entity(eid) => {
-                let Some(entity) = self.db.find(eid).next() else {
-                    return Ok(html_response(pages::not_found()));
+                let Some(entity) = db.find(eid).next() else {
+                    return Ok(EcsResponse::Markup(pages::not_found()));
                 };
 
                 entity.attach(LastAccess::now());
-                Ok(html_response(pages::entity(entity)))
+                Ok(EcsResponse::Markup(pages::entity(entity)))
             }
             RequestType::Component {
                 entity_id: entity,
-                component,
+                ref component,
             } => {
-                let Some(entity) = self.db.find(entity).next() else {
-                    return Ok(html_response(pages::not_found()));
+                let Some(entity) = db.find(entity).next() else {
+                    return Ok(EcsResponse::Markup(pages::not_found()));
                 };
 
                 entity.attach(LastAccess::now());
-                Ok(html_response(pages::component_editor(entity, &component)))
+                Ok(EcsResponse::Markup(pages::component_editor(
+                    entity, component,
+                )))
             }
             RequestType::ModifyComponent {
                 entity_id,
-                component,
-                value,
+                ref component,
+                ref value,
             } => {
-                let Some(entity) = self.db.find(entity_id).next() else {
-                    return Ok(html_response(not_found()));
+                let Some(entity) = db.find(entity_id).next() else {
+                    return Ok(EcsResponse::Markup(pages::not_found()));
                 };
 
-                let target = format!("entities/{entity_id}/components/{component}");
+                let target =
+                    iri::PathBuf::new(format!("entities/{entity_id}/components/{component}"))
+                        .unwrap();
 
-                let component = match ecsdb::DynComponent::from_json(&component, &value) {
+                let component = match ecsdb::DynComponent::from_json(component, value) {
                     Ok(c) => c,
                     Err(e) => todo!("{e:?}"),
                 };
 
                 entity.attach(LastAccess::now()).dyn_attach(component);
 
-                Ok(http::Response::builder()
-                    .status(StatusCode::SEE_OTHER)
-                    .header(header::LOCATION, &target)
-                    .body(maud::html!(a href=(target) { "See Other" }))
-                    .unwrap())
+                Ok(EcsResponse::Redirect(target))
             }
         }
     }
-}
-
-fn html_response(markup: maud::Markup) -> http::Response<maud::Markup> {
-    http::Response::builder()
-        .status(StatusCode::OK)
-        .header("content-type", "text/html")
-        .body(markup)
-        .unwrap()
 }
 
 mod pages {
