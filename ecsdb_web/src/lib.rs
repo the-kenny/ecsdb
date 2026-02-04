@@ -78,7 +78,7 @@ where
     DbFun: Fn(&http::Request<RequestBody>) -> Result<ecsdb::Ecs, ecsdb::Error>
         + Send
         + Sync
-        + Copy
+        + Clone
         + 'static,
     <RequestBody as http_body::Body>::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
@@ -178,6 +178,7 @@ where
         {
             Box::pin(futures_util::future::ready(asset.clone()))
         } else {
+            let open_db = open_db.clone();
             ecs_service(base_uri.clone(), open_db, req)
                 .unwrap_or_else(|e| e.into_response())
                 .boxed()
@@ -398,6 +399,14 @@ mod pages {
     pub fn entity(entity: ecsdb::Entity) -> Markup {
         html!({
             table {
+                thead {
+                    tr {
+                        th { "Component" }
+                        th { "Type" }
+                        th { "Data" }
+                    }
+                }
+                tbody {
                     @for name in entity.component_names() {
                         @let component = entity.dyn_component(&name).unwrap();
                         tr {
@@ -408,11 +417,17 @@ mod pages {
                             }
                             td {
                                 pre {
+                                    (format!("{:?}", component.kind()))
+                                }
+                            }
+                            td {
+                                pre {
                                     (component.as_json().map(|j| j.to_string()).unwrap_or_else(|| "<unrenderable>".to_string()))
                                 }
                             }
                         }
                     }
+                }
             }
         })
     }
@@ -449,21 +464,47 @@ mod pages {
             return not_found();
         };
 
-        let Some(component_json) = component.as_json() else {
-            return not_found();
-        };
+        let content_editor = match component.kind() {
+            ecsdb::dyn_component::Kind::Json => {
+                let Some(component_json) = component.as_json() else {
+                    return not_found();
+                };
 
-        let json = serde_json::to_string_pretty(&component_json).expect("component -> json");
+                let json =
+                    serde_json::to_string_pretty(&component_json).expect("component -> json");
+
+                html! {
+                    pre {
+                        textarea name="component_data" class="width:100%" rows=(json.lines().count()) {
+                            (json)
+                        }
+                    }
+                    input type="submit" {}
+                }
+            }
+            ecsdb::dyn_component::Kind::Blob => {
+                let Some(blob) = component.as_blob() else {
+                    return not_found();
+                };
+
+                html! {
+                    input type="text" readonly value=(format!("<{} bytes>", blob.len())) {}
+                }
+            }
+            ecsdb::dyn_component::Kind::Null => {
+                html! {
+                    pre { "null" }
+                }
+            }
+            ecsdb::dyn_component::Kind::Other(t) => html! {
+                p { "Unsupported data type " (format!("'{t:?}'"))}
+            },
+        };
 
         html! {
             h2 { (format!("Editing {component_name} of {entity}")) }
             form method="post" {
-                pre {
-                    textarea name="component_data" class="width:100%" rows=(json.lines().count()) {
-                        (json)
-                    }
-                }
-                input type="submit" {}
+                (content_editor)
             }
         }
     }
