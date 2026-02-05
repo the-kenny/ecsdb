@@ -14,6 +14,8 @@ use http::Method;
 use tower_http::ServiceExt;
 use tracing::{debug, instrument};
 
+use crate::pages::not_found;
+
 #[derive(Serialize, Deserialize, Component, Debug)]
 pub struct LastAccess(pub chrono::DateTime<chrono::Utc>);
 
@@ -119,20 +121,23 @@ where
         let db = open_db(&request)?;
         let kind = RequestType::from_request(request).await?;
 
+        let wrap_markup = |markup| {
+            if is_htmx_request {
+                markup
+            } else {
+                let breadcrumbs = kind.breadcrumbs();
+                pages::wrap_in_body(&base_url, &breadcrumbs, markup)
+            }
+        };
+
         match kind.handle(db).await? {
             EcsResponse::Markup(markup) => {
-                let markup = if is_htmx_request {
-                    markup
-                } else {
-                    let breadcrumbs = kind.breadcrumbs();
-                    pages::wrap_in_body(&base_url, &breadcrumbs, markup)
-                };
+                let markup = wrap_markup(markup);
 
                 http::Response::builder()
                     .status(StatusCode::OK)
                     .header(header::CONTENT_TYPE, "text/html")
                     .body(ResponseBody::from(markup.into_string()))
-                    .map_err(|e| Error::Other(Box::new(e)))
             }
             EcsResponse::Redirect(path) => {
                 // Prepent base url to our redirect target
@@ -143,9 +148,15 @@ where
                     .status(StatusCode::SEE_OTHER)
                     .header(header::LOCATION, base.as_str())
                     .body(ResponseBody::new(Bytes::new()))
-                    .map_err(|e| Error::Other(Box::new(e)))
+            }
+            EcsResponse::NotFound => {
+                let markup = wrap_markup(not_found());
+                http::Response::builder()
+                    .status(StatusCode::NOT_FOUND)
+                    .body(ResponseBody::new(Bytes::from(markup.into_string())))
             }
         }
+        .map_err(|e| Error::Other(Box::new(e)))
     }
 
     macro_rules! include_assets {
@@ -335,6 +346,7 @@ impl RequestType {
 enum EcsResponse {
     Markup(maud::Markup),
     Redirect(iri::PathBuf),
+    NotFound,
 }
 
 impl RequestType {
@@ -347,7 +359,7 @@ impl RequestType {
             }
             RequestType::Entity(eid) => {
                 let Some(entity) = db.find(eid).next() else {
-                    return Ok(EcsResponse::Markup(pages::not_found()));
+                    return Ok(EcsResponse::NotFound);
                 };
 
                 entity.attach(LastAccess::now());
@@ -358,7 +370,7 @@ impl RequestType {
                 ref component,
             } => {
                 let Some(entity) = db.find(entity).next() else {
-                    return Ok(EcsResponse::Markup(pages::not_found()));
+                    return Ok(EcsResponse::NotFound);
                 };
 
                 entity.attach(LastAccess::now());
@@ -372,7 +384,7 @@ impl RequestType {
                 ref value,
             } => {
                 let Some(entity) = db.find(entity_id).next() else {
-                    return Ok(EcsResponse::Markup(pages::not_found()));
+                    return Ok(EcsResponse::NotFound);
                 };
 
                 let target =
@@ -552,6 +564,7 @@ impl std::fmt::Debug for EcsResponse {
         match self {
             Self::Markup(_markup) => f.debug_tuple("Markup").field(&"<html>").finish(),
             Self::Redirect(path) => f.debug_tuple("Redirect").field(path).finish(),
+            Self::NotFound => f.debug_tuple("NotFound").finish(),
         }
     }
 }
