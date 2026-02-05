@@ -483,6 +483,9 @@ impl RequestType {
 }
 
 mod pages {
+
+    use std::fmt::Display;
+
     use maud::{Markup, html};
 
     use crate::Breadcrumb;
@@ -522,25 +525,65 @@ mod pages {
         })
     }
 
+    fn format_time<Tz>(datetime: chrono::DateTime<Tz>) -> maud::Markup
+    where
+        Tz: chrono::TimeZone + Copy,
+        Tz::Offset: Display + Copy,
+    {
+        let now = chrono::Utc::now().with_timezone(&datetime.timezone());
+        let duration = now.signed_duration_since(datetime);
+        let full_days = (now.date_naive() - datetime.date_naive()).num_days();
+
+        let human = match (full_days, duration.num_hours(), duration.num_minutes()) {
+            (0, 0, 0) => "just now".to_string(),
+            (0, 0, 1) => "1 minute ago".to_string(),
+            (0, 0, m) => format!("{m} minutes ago"),
+            (0, 1, _) => "1 hour ago".to_string(),
+            (0, h, _) => format!("{h} hours ago"),
+            (1, h @ 0..=23, _) => format!("{h} hours ago"),
+            (1, _, _) => "yesterday".to_string(),
+            (d @ ..=6, _, _) => format!("{d} days ago"),
+            (7, _, _) => "1 week ago".to_string(),
+            _ if datetime == chrono::DateTime::<Tz>::MIN_UTC => "-".into(),
+            _ => datetime.format("%Y-%m-%d").to_string(),
+        };
+
+        html! {
+            time datetime=(datetime.to_rfc3339()) { (human) }
+        }
+    }
+
     pub fn entities<'a>(entities: impl IntoIterator<Item = ecsdb::Entity<'a>>) -> Markup {
         html!({
             table {
-                tr {
-                    th { "EntityId" }
-                    th { "Components" }
-                }
-                @for entity in entities.into_iter() {
+                thead {
                     tr {
-                        td {
-                            a href=(format!("entities/{}", entity.id())) {
-                                pre { (entity.id()) }
-                            }
-                        }
-                        td {
-                            pre {
-                                @for name in entity.component_names() {
-                                    (name) ", "
+                        th { "EntityId" }
+                        th { "Created" }
+                        th { "Updated" }
+                        th { "Components" }
+                    }
+                }
+                tbody {
+                    @for entity in entities.into_iter() {
+                        tr {
+                            td {
+                                a href=(format!("entities/{}", entity.id())) {
+                                    pre { (entity.id()) }
                                 }
+                            }
+                            td {
+                                (format_time(entity.created_at()))
+                            }
+                            td {
+                                (format_time(entity.last_modified()))
+                            }
+                            td  {
+                                @let component_tooltip = entity.component_names().collect::<Vec<_>>().join("\n");
+                                span title=(component_tooltip) {
+                                    (entity.component_names().count()) " Components"
+                                }
+
                             }
                         }
                     }
