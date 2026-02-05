@@ -155,6 +155,19 @@ where
                     .status(StatusCode::NOT_FOUND)
                     .body(ResponseBody::new(Bytes::from(markup.into_string())))
             }
+            EcsResponse::Download {
+                filename,
+                data,
+                content_type,
+            } => http::Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, content_type.to_string())
+                .header(
+                    header::CONTENT_DISPOSITION,
+                    format!(r#"attachment; filename="{filename}""#),
+                )
+                .header(header::CONTENT_LENGTH, data.len())
+                .body(ResponseBody::new(Bytes::from(data))),
         }
         .map_err(|e| Error::Other(Box::new(e)))
     }
@@ -215,6 +228,10 @@ pub enum RequestType {
         component: String,
         value: serde_json::Value,
     },
+    DownloadComponent {
+        entity: EntityId,
+        component: String,
+    },
 }
 
 struct Breadcrumb {
@@ -257,6 +274,17 @@ impl RequestType {
 
                 Ok(Self::Component {
                     entity_id,
+                    component: component.to_owned(),
+                })
+            }
+
+            (&Method::GET, &["entities", entity_id, "components", component, "download"]) => {
+                let Ok(entity) = str::parse::<EntityId>(entity_id) else {
+                    return Err(Error::InvalidEntityId(entity_id.into()));
+                };
+
+                Ok(Self::DownloadComponent {
+                    entity,
                     component: component.to_owned(),
                 })
             }
@@ -337,6 +365,7 @@ impl RequestType {
                 add(&mut breadcrumbs, component, &["components", component]);
             }
             RequestType::ModifyComponent { .. } => unreachable!(),
+            RequestType::DownloadComponent { .. } => unreachable!(),
         };
 
         breadcrumbs
@@ -347,6 +376,11 @@ enum EcsResponse {
     Markup(maud::Markup),
     Redirect(iri::PathBuf),
     NotFound,
+    Download {
+        filename: String,
+        content_type: mime::Mime,
+        data: Vec<u8>,
+    },
 }
 
 impl RequestType {
@@ -399,6 +433,50 @@ impl RequestType {
                 entity.attach(LastAccess::now()).dyn_attach(component);
 
                 Ok(EcsResponse::Redirect(target))
+            }
+            Self::DownloadComponent {
+                entity,
+                ref component,
+            } => {
+                let Some(entity) = db.find(entity).next() else {
+                    return Ok(EcsResponse::Markup(pages::not_found()));
+                };
+
+                let Some(component) = entity.dyn_component(component) else {
+                    return Ok(EcsResponse::NotFound);
+                };
+
+                let filename = {
+                    let ext = match component.kind() {
+                        Kind::Json => ".json",
+                        Kind::Blob | Kind::Null | Kind::Other(_) => "",
+                    };
+
+                    format!(
+                        "ecsdb_{}_{}{}",
+                        entity.id(),
+                        component.name().replace("::", "-"),
+                        ext
+                    )
+                };
+
+                use ecsdb::dyn_component::Kind;
+                let content_type = match component.kind() {
+                    Kind::Json => mime::APPLICATION_JSON,
+                    Kind::Blob | Kind::Null | Kind::Other(_) => mime::APPLICATION_OCTET_STREAM,
+                };
+
+                let Some(data) = component.into_blob() else {
+                    return Ok(EcsResponse::NotFound);
+                };
+
+                entity.attach(LastAccess::now());
+
+                Ok(EcsResponse::Download {
+                    filename,
+                    content_type,
+                    data,
+                })
             }
         }
     }
@@ -500,7 +578,16 @@ mod pages {
                 };
 
                 html! {
-                    input type="text" readonly value=(format!("<{} bytes>", blob.len())) {}
+                    a href=(format!("entities/{}/components/{}/download", entity.id(), component_name)) {
+                        "Download (" (blob.len()) " bytes)"
+                    }
+
+                    details {
+                        summary { "Base64" }
+                        textarea style="width:100%" rows="100" readonly hx-on:click="this.select()" {
+                            (data_encoding::BASE64.encode(blob))
+                        }
+                    }
                 }
             }
             ecsdb::dyn_component::Kind::Null => {
@@ -565,6 +652,16 @@ impl std::fmt::Debug for EcsResponse {
             Self::Markup(_markup) => f.debug_tuple("Markup").field(&"<html>").finish(),
             Self::Redirect(path) => f.debug_tuple("Redirect").field(path).finish(),
             Self::NotFound => f.debug_tuple("NotFound").finish(),
+            Self::Download {
+                content_type,
+                data,
+                filename,
+            } => f
+                .debug_tuple("Download")
+                .field(filename)
+                .field(content_type)
+                .field(&format_args!("{}b", data.len()))
+                .finish(),
         }
     }
 }
@@ -591,6 +688,11 @@ impl std::fmt::Debug for RequestType {
                 .field(entity_id)
                 .field(&format_args!("{component}"))
                 .field(&format_args!("<redacted>"))
+                .finish(),
+            Self::DownloadComponent { entity, component } => f
+                .debug_tuple("Download")
+                .field(entity)
+                .field(component)
                 .finish(),
         }
     }
