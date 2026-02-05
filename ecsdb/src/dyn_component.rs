@@ -96,6 +96,28 @@ impl<'a> DynComponent<'a> {
         }
     }
 
+    pub fn into_blob(self) -> Option<Vec<u8>> {
+        use rusqlite::types::{ToSqlOutput, Value, ValueRef};
+
+        match self.1 {
+            ToSqlOutput::Borrowed(ValueRef::Blob(b)) => Some(b.to_owned()),
+            ToSqlOutput::Owned(Value::Blob(b)) => Some(b),
+            ToSqlOutput::Owned(Value::Null) | ToSqlOutput::Borrowed(ValueRef::Null) => Some(vec![]),
+            ToSqlOutput::Owned(ref o) => {
+                warn!(r#type = ?o.data_type(), "DynComponent::into_blob unsupported");
+                None
+            }
+            ToSqlOutput::Borrowed(ref b) => {
+                warn!(r#type = ?b.data_type(), "DynComponent::into_blob unsupported");
+                None
+            }
+            ref x => {
+                warn!(value = ?x, "DynComponent::into_blob unsupported");
+                None
+            }
+        }
+    }
+
     pub fn from_json(
         name: &'a str,
         value: &serde_json::Value,
