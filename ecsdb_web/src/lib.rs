@@ -66,6 +66,82 @@ impl Error {
     }
 }
 
+async fn ecs_service<RB, DbFun>(
+    base_url: http::Uri,
+    open_db: DbFun,
+    request: http::Request<RB>,
+) -> Result<http::Response<ResponseBody>, Error>
+where
+    DbFun: Fn(&http::Request<RB>) -> Result<ecsdb::Ecs, ecsdb::Error>,
+    RB: http_body::Body<Data = Bytes> + Unpin,
+    RB::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let is_hx_request = request
+        .headers()
+        .get("HX-Request")
+        .is_some_and(|h| h.to_str().is_ok_and(|v| v == "true"));
+
+    let is_hx_boosted = request
+        .headers()
+        .get("HX-Boosted")
+        .is_some_and(|h| h.to_str().is_ok_and(|v| v == "true"));
+
+    let is_htmx_request = is_hx_request && !is_hx_boosted;
+
+    let db = open_db(&request)?;
+    let kind = RequestType::from_request(request).await?;
+
+    let wrap_markup = |markup| {
+        if is_htmx_request {
+            markup
+        } else {
+            let breadcrumbs = kind.breadcrumbs();
+            pages::wrap_in_body(&base_url, &breadcrumbs, markup)
+        }
+    };
+
+    match kind.handle(db).await? {
+        EcsResponse::Markup(markup) => {
+            let markup = wrap_markup(markup);
+
+            http::Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "text/html")
+                .body(ResponseBody::from(markup.into_string()))
+        }
+        EcsResponse::Redirect(path) => {
+            // Prepent base url to our redirect target
+            let mut base = iri::PathBuf::new(base_url.path().to_owned()).unwrap();
+            base.symbolic_append(path.segments());
+
+            http::Response::builder()
+                .status(StatusCode::SEE_OTHER)
+                .header(header::LOCATION, base.as_str())
+                .body(ResponseBody::new(Bytes::new()))
+        }
+        EcsResponse::NotFound => {
+            let markup = wrap_markup(not_found());
+            http::Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(ResponseBody::new(Bytes::from(markup.into_string())))
+        }
+        EcsResponse::Download {
+            filename,
+            data,
+            content_type,
+        } => http::Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, content_type.to_string())
+            .header(
+                header::CONTENT_DISPOSITION,
+                format!(r#"attachment; filename="{filename}""#),
+            )
+            .header(header::CONTENT_LENGTH, data.len())
+            .body(ResponseBody::new(Bytes::from(data))),
+    }
+    .map_err(|e| Error::Other(Box::new(e)))
+}
+
 pub fn service<RequestBody, DbFun>(
     base_path: &str,
     open_db: DbFun,
@@ -95,82 +171,6 @@ where
         .as_bytes(),
     )
     .unwrap();
-
-    async fn ecs_service<RB, DbFun>(
-        base_url: http::Uri,
-        open_db: DbFun,
-        request: http::Request<RB>,
-    ) -> Result<http::Response<ResponseBody>, Error>
-    where
-        DbFun: Fn(&http::Request<RB>) -> Result<ecsdb::Ecs, ecsdb::Error>,
-        RB: http_body::Body<Data = Bytes> + Unpin,
-        RB::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
-    {
-        let is_hx_request = request
-            .headers()
-            .get("HX-Request")
-            .is_some_and(|h| h.to_str().is_ok_and(|v| v == "true"));
-
-        let is_hx_boosted = request
-            .headers()
-            .get("HX-Boosted")
-            .is_some_and(|h| h.to_str().is_ok_and(|v| v == "true"));
-
-        let is_htmx_request = is_hx_request && !is_hx_boosted;
-
-        let db = open_db(&request)?;
-        let kind = RequestType::from_request(request).await?;
-
-        let wrap_markup = |markup| {
-            if is_htmx_request {
-                markup
-            } else {
-                let breadcrumbs = kind.breadcrumbs();
-                pages::wrap_in_body(&base_url, &breadcrumbs, markup)
-            }
-        };
-
-        match kind.handle(db).await? {
-            EcsResponse::Markup(markup) => {
-                let markup = wrap_markup(markup);
-
-                http::Response::builder()
-                    .status(StatusCode::OK)
-                    .header(header::CONTENT_TYPE, "text/html")
-                    .body(ResponseBody::from(markup.into_string()))
-            }
-            EcsResponse::Redirect(path) => {
-                // Prepent base url to our redirect target
-                let mut base = iri::PathBuf::new(base_url.path().to_owned()).unwrap();
-                base.symbolic_append(path.segments());
-
-                http::Response::builder()
-                    .status(StatusCode::SEE_OTHER)
-                    .header(header::LOCATION, base.as_str())
-                    .body(ResponseBody::new(Bytes::new()))
-            }
-            EcsResponse::NotFound => {
-                let markup = wrap_markup(not_found());
-                http::Response::builder()
-                    .status(StatusCode::NOT_FOUND)
-                    .body(ResponseBody::new(Bytes::from(markup.into_string())))
-            }
-            EcsResponse::Download {
-                filename,
-                data,
-                content_type,
-            } => http::Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, content_type.to_string())
-                .header(
-                    header::CONTENT_DISPOSITION,
-                    format!(r#"attachment; filename="{filename}""#),
-                )
-                .header(header::CONTENT_LENGTH, data.len())
-                .body(ResponseBody::new(Bytes::from(data))),
-        }
-        .map_err(|e| Error::Other(Box::new(e)))
-    }
 
     macro_rules! include_assets {
         ([ $( ($asset:literal, $content_type:literal) ),* ] ) => {{
