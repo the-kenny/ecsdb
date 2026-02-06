@@ -11,7 +11,7 @@ use futures_util::{FutureExt, TryFutureExt};
 use http::Method;
 use tower_http::ServiceExt;
 
-use crate::ecs_service::RequestType;
+use crate::ecs_service::Request;
 
 #[derive(Serialize, Deserialize, Component, Debug)]
 pub struct LastAccess(pub chrono::DateTime<chrono::Utc>);
@@ -111,7 +111,7 @@ struct Breadcrumb {
 }
 
 impl Breadcrumb {
-    fn from_request(request: &RequestType) -> Vec<Breadcrumb> {
+    fn from_request(request: &Request) -> Vec<Breadcrumb> {
         let mut breadcrumbs = vec![Breadcrumb {
             title: "Entities".into(),
             path: Some(iri::PathBuf::new("entities".into()).expect("Valid iri::PathBuf")),
@@ -136,12 +136,12 @@ impl Breadcrumb {
         }
 
         match request {
-            RequestType::Entities => (),
-            RequestType::Entity(eid) => {
+            Request::Entities => (),
+            Request::Entity(eid) => {
                 let eid = eid.to_string();
                 add(&mut breadcrumbs, &eid, &[&eid]);
             }
-            RequestType::Component {
+            Request::Component {
                 entity_id,
                 component,
             } => {
@@ -149,8 +149,8 @@ impl Breadcrumb {
                 add(&mut breadcrumbs, &entity_id, &[&entity_id]);
                 add(&mut breadcrumbs, component, &["components", component]);
             }
-            RequestType::ModifyComponent { .. } => unreachable!(),
-            RequestType::DownloadComponent { .. } => unreachable!(),
+            Request::ModifyComponent { .. } => unreachable!(),
+            Request::DownloadComponent { .. } => unreachable!(),
         };
 
         breadcrumbs
@@ -158,10 +158,8 @@ impl Breadcrumb {
 }
 
 mod pages {
-
-    use std::fmt::Display;
-
     use maud::{Markup, html};
+    use std::fmt::Display;
 
     use crate::Breadcrumb;
     pub fn entity(entity: ecsdb::Entity) -> Markup {
