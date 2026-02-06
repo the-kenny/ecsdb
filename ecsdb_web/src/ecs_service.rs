@@ -37,7 +37,7 @@ where
     let is_htmx_request = is_hx_request && !is_hx_boosted;
 
     let db = open_db(&request)?;
-    let kind = RequestType::from_request(request).await?;
+    let kind = Request::from_request(request).await?;
 
     let wrap_markup = |markup| {
         if is_htmx_request {
@@ -49,7 +49,7 @@ where
     };
 
     match kind.handle(db).await? {
-        EcsResponse::Markup(markup) => {
+        Response::Markup(markup) => {
             let markup = wrap_markup(markup);
 
             http::Response::builder()
@@ -57,7 +57,7 @@ where
                 .header(header::CONTENT_TYPE, "text/html")
                 .body(ResponseBody::from(markup.into_string()))
         }
-        EcsResponse::Redirect(path) => {
+        Response::Redirect(path) => {
             // Prepent base url to our redirect target
             let mut base = iri::PathBuf::new(base_url.path().to_owned()).unwrap();
             base.symbolic_append(path.segments());
@@ -67,13 +67,13 @@ where
                 .header(header::LOCATION, base.as_str())
                 .body(ResponseBody::new(Bytes::new()))
         }
-        EcsResponse::NotFound => {
+        Response::NotFound => {
             let markup = wrap_markup(pages::not_found());
             http::Response::builder()
                 .status(StatusCode::NOT_FOUND)
                 .body(ResponseBody::new(Bytes::from(markup.into_string())))
         }
-        EcsResponse::Download {
+        Response::Download {
             filename,
             data,
             content_type,
@@ -125,7 +125,7 @@ impl Error {
     }
 }
 
-pub enum RequestType {
+pub enum Request {
     Entities,
     Entity(EntityId),
     Component {
@@ -143,7 +143,7 @@ pub enum RequestType {
     },
 }
 
-enum EcsResponse {
+enum Response {
     Markup(maud::Markup),
     Redirect(iri::PathBuf),
     NotFound,
@@ -154,7 +154,7 @@ enum EcsResponse {
     },
 }
 
-impl RequestType {
+impl Request {
     #[instrument(level = "debug", ret, skip_all, fields(request.url = %req.uri()))]
     async fn from_request<RB>(req: http::Request<RB>) -> Result<Self, Error>
     where
@@ -242,40 +242,38 @@ impl RequestType {
     }
 
     #[instrument(level = "debug", skip(db), ret)]
-    async fn handle(&self, db: ecsdb::Ecs) -> Result<EcsResponse, Error> {
+    async fn handle(&self, db: ecsdb::Ecs) -> Result<Response, Error> {
         match *self {
-            RequestType::Entities => {
+            Request::Entities => {
                 let entities = db.query::<ecsdb::Entity, ()>();
-                Ok(EcsResponse::Markup(pages::entities(entities)))
+                Ok(Response::Markup(pages::entities(entities)))
             }
-            RequestType::Entity(eid) => {
+            Request::Entity(eid) => {
                 let Some(entity) = db.find(eid).next() else {
-                    return Ok(EcsResponse::NotFound);
+                    return Ok(Response::NotFound);
                 };
 
                 entity.attach(LastAccess::now());
-                Ok(EcsResponse::Markup(pages::entity(entity)))
+                Ok(Response::Markup(pages::entity(entity)))
             }
-            RequestType::Component {
+            Request::Component {
                 entity_id: entity,
                 ref component,
             } => {
                 let Some(entity) = db.find(entity).next() else {
-                    return Ok(EcsResponse::NotFound);
+                    return Ok(Response::NotFound);
                 };
 
                 entity.attach(LastAccess::now());
-                Ok(EcsResponse::Markup(pages::component_editor(
-                    entity, component,
-                )))
+                Ok(Response::Markup(pages::component_editor(entity, component)))
             }
-            RequestType::ModifyComponent {
+            Request::ModifyComponent {
                 entity_id,
                 ref component,
                 ref value,
             } => {
                 let Some(entity) = db.find(entity_id).next() else {
-                    return Ok(EcsResponse::NotFound);
+                    return Ok(Response::NotFound);
                 };
 
                 let target =
@@ -289,18 +287,18 @@ impl RequestType {
 
                 entity.attach(LastAccess::now()).dyn_attach(component);
 
-                Ok(EcsResponse::Redirect(target))
+                Ok(Response::Redirect(target))
             }
             Self::DownloadComponent {
                 entity,
                 ref component,
             } => {
                 let Some(entity) = db.find(entity).next() else {
-                    return Ok(EcsResponse::Markup(pages::not_found()));
+                    return Ok(Response::Markup(pages::not_found()));
                 };
 
                 let Some(component) = entity.dyn_component(component) else {
-                    return Ok(EcsResponse::NotFound);
+                    return Ok(Response::NotFound);
                 };
 
                 let filename = {
@@ -324,12 +322,12 @@ impl RequestType {
                 };
 
                 let Some(data) = component.into_blob() else {
-                    return Ok(EcsResponse::NotFound);
+                    return Ok(Response::NotFound);
                 };
 
                 entity.attach(LastAccess::now());
 
-                Ok(EcsResponse::Download {
+                Ok(Response::Download {
                     filename,
                     content_type,
                     data,
@@ -339,7 +337,7 @@ impl RequestType {
     }
 }
 
-impl std::fmt::Debug for EcsResponse {
+impl std::fmt::Debug for Response {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Markup(_markup) => f.debug_tuple("Markup").field(&"<html>").finish(),
@@ -359,7 +357,7 @@ impl std::fmt::Debug for EcsResponse {
     }
 }
 
-impl std::fmt::Debug for RequestType {
+impl std::fmt::Debug for Request {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Entities => write!(f, "Entities"),
