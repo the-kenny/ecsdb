@@ -125,8 +125,30 @@ impl Error {
     }
 }
 
+#[derive(Deserialize, Clone, Copy, Debug)]
+pub struct Pagination {
+    pub after: EntityId,
+    #[serde(default = "default_per_page")]
+    pub count: usize,
+}
+
+fn default_per_page() -> usize {
+    20
+}
+
+impl Default for Pagination {
+    fn default() -> Self {
+        Self {
+            after: Default::default(),
+            count: 20,
+        }
+    }
+}
+
 pub enum Request {
-    Entities,
+    Entities {
+        pagination: Pagination,
+    },
     Entity(EntityId),
     Component {
         entity_id: EntityId,
@@ -172,7 +194,11 @@ impl Request {
         debug!(?path_components);
 
         match (req.method(), path_components.iter().as_slice()) {
-            (&Method::GET, &["entities"]) => Ok(Self::Entities),
+            (&Method::GET, &["entities"]) => {
+                let query = url.query().unwrap_or_default();
+                let pagination: Pagination = serde_urlencoded::from_str(query).unwrap_or_default();
+                Ok(Self::Entities { pagination })
+            }
 
             (&Method::GET, &["entities", entity_id]) => {
                 let Ok(entity_id) = str::parse::<EntityId>(entity_id) else {
@@ -244,9 +270,14 @@ impl Request {
     #[instrument(level = "debug", skip(db), ret)]
     async fn handle(&self, db: ecsdb::Ecs) -> Result<Response, Error> {
         match *self {
-            Request::Entities => {
-                let entities = db.query::<ecsdb::Entity, ()>();
-                Ok(Response::Markup(pages::entities(entities)))
+            Request::Entities { pagination } => {
+                let mut entities = db
+                    .query::<ecsdb::Entity, ()>()
+                    .filter(|e| e.id() > pagination.after)
+                    .take(pagination.count)
+                    .collect::<Vec<_>>();
+                entities.sort_by_key(|e| e.id());
+                Ok(Response::Markup(pages::entities(&entities)))
             }
             Request::Entity(eid) => {
                 let Some(entity) = db.find(eid).next() else {
@@ -360,8 +391,8 @@ impl std::fmt::Debug for Response {
 impl std::fmt::Debug for Request {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Entities => write!(f, "Entities"),
-            Self::Entity(arg0) => f.debug_tuple("Entity").field(arg0).finish(),
+            Self::Entities { pagination } => f.debug_tuple("Entities").field(&pagination).finish(),
+            Self::Entity(eid) => f.debug_tuple("Entity").field(eid).finish(),
             Self::Component {
                 entity_id,
                 component,

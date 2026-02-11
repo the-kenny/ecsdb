@@ -136,7 +136,7 @@ impl Breadcrumb {
         }
 
         match request {
-            Request::Entities => (),
+            Request::Entities { .. } => (),
             Request::Entity(eid) => {
                 let eid = eid.to_string();
                 add(&mut breadcrumbs, &eid, &[&eid]);
@@ -226,7 +226,10 @@ mod pages {
         }
     }
 
-    pub fn entities<'a>(entities: impl IntoIterator<Item = ecsdb::Entity<'a>>) -> Markup {
+    pub fn entities<'a>(entities: &[ecsdb::Entity<'a>]) -> Markup {
+        let last_eid = entities.last().map(|e| e.id()).unwrap_or_default();
+        let next_link = format!("entities?after={last_eid}");
+
         html!({
             table {
                 thead {
@@ -238,7 +241,7 @@ mod pages {
                     }
                 }
                 tbody {
-                    @for entity in entities.into_iter() {
+                    @for entity in entities {
                         tr {
                             td {
                                 a href=(format!("entities/{}", entity.id())) {
@@ -257,6 +260,21 @@ mod pages {
                                     (entity.component_names().count()) " Components"
                                 }
 
+                            }
+                        }
+                    }
+                }
+                tfoot {
+                    tr {
+                        td colspan="999" {
+                            nav id="table-navigation" hx-swap-oob="true" {
+                                a href=(next_link)
+                                  hx-get=(next_link)
+                                  hx-target="previous tbody"
+                                  hx-swap="beforeend"
+                                  hx-select="tbody>tr" {
+                                    "Load more"
+                                }
                             }
                         }
                     }
