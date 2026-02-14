@@ -159,7 +159,7 @@ impl Breadcrumb {
 
 mod pages {
     use maud::{Markup, html};
-    use std::fmt::Display;
+    use std::{collections::BTreeSet, fmt::Display};
 
     use crate::Breadcrumb;
     pub fn entity(entity: ecsdb::Entity) -> Markup {
@@ -226,54 +226,81 @@ mod pages {
         }
     }
 
-    pub fn entities<'a>(entities: &[ecsdb::Entity<'a>]) -> Markup {
-        let last_eid = entities.last().map(|e| e.id()).unwrap_or_default();
-        let next_link = format!("entities?after={last_eid}");
+    pub fn entities<'a>(
+        entities: &[ecsdb::Entity<'a>],
+        filter: &crate::ecs_service::Filter,
+    ) -> Markup {
+        let component_names = entities
+            .iter()
+            .flat_map(|e| e.component_names())
+            .collect::<BTreeSet<_>>();
+
+        let next_link = format!("entities?{}", filter.as_query());
 
         html!({
-            table {
-                thead {
-                    tr {
-                        th { "EntityId" }
-                        th { "Created" }
-                        th { "Updated" }
-                        th { "Components" }
-                    }
-                }
-                tbody {
-                    @for entity in entities {
-                        tr {
-                            td {
-                                a href=(format!("entities/{}", entity.id())) {
-                                    pre { (entity.id()) }
-                                }
-                            }
-                            td {
-                                (format_time(entity.created_at()))
-                            }
-                            td {
-                                (format_time(entity.last_modified()))
-                            }
-                            td  {
-                                @let component_tooltip = entity.component_names().collect::<Vec<_>>().join("\n");
-                                span title=(component_tooltip) {
-                                    (entity.component_names().count()) " Components"
-                                }
-
-                            }
+            form {
+                label {
+                    "Component"
+                    select name="component_names" {
+                        option value="" selected[filter.component_names.is_empty()] { "-" }
+                        @for component_name in (component_names) {
+                            @let selected = filter.component_names.contains(&component_name);
+                            option value=(component_name) selected[selected] { (component_name) }
                         }
                     }
                 }
-                tfoot {
-                    tr {
-                        td colspan="999" {
-                            nav id="table-navigation" hx-swap-oob="true" {
-                                a href=(next_link)
-                                  hx-get=(next_link)
-                                  hx-target="previous tbody"
-                                  hx-swap="beforeend"
-                                  hx-select="tbody>tr" {
-                                    "Load more"
+
+                // input type="hidden" name="after" value=(filter.after) { }
+                input type="hidden" name="count" value=(filter.count) { }
+
+                button type="submit" name="after" value="0" { "Apply "}
+
+                table {
+                    thead {
+                        tr {
+                            th { "EntityId" }
+                            th { "Created" }
+                            th { "Updated" }
+                            th { "Components" }
+                        }
+                    }
+                    tbody {
+                        @for entity in entities {
+                            tr {
+                                td {
+                                    a href=(format!("entities/{}", entity.id())) {
+                                        pre { (entity.id()) }
+                                    }
+                                }
+                                td {
+                                    (format_time(entity.created_at()))
+                                }
+                                td {
+                                    (format_time(entity.last_modified()))
+                                }
+                                td  {
+                                    @let component_tooltip = entity.component_names().collect::<Vec<_>>().join("\n");
+                                    span title=(component_tooltip) {
+                                        (entity.component_names().count()) " Components"
+                                    }
+
+                                }
+                            }
+                        }
+                    }
+                    tfoot {
+                        tr {
+                            td colspan="999" {
+                                nav id="table-navigation" hx-swap-oob="true" {
+                                    button type="submit"
+                                           name="after"
+                                           value=(filter.after)
+                                           hx-target="previous tbody"
+                                           hx-get="entities"
+                                           hx-swap="beforeend"
+                                           hx-select="tbody>tr" {
+                                        "Next"
+                                    }
                                 }
                             }
                         }
@@ -735,43 +762,6 @@ mod pages {
 // #[derive(rust_embed::Embed, Debug, Copy, Clone)]
 // #[folder = "src/templates/static/"]
 //  struct Assets;
-
-// fn deserialize_comma_separated_string<'de, V, T, D>(deserializer: D) -> Result<V, D::Error>
-// where
-//     V: FromIterator<T>,
-//     T: FromStr,
-//     T::Err: Display,
-//     D: serde::de::Deserializer<'de>,
-// {
-//     struct CommaSeparated<V, T>(PhantomData<V>, PhantomData<T>);
-
-//     impl<V, T> serde::de::Visitor<'_> for CommaSeparated<V, T>
-//     where
-//         V: FromIterator<T>,
-//         T: FromStr,
-//         T::Err: Display,
-//     {
-//         type Value = V;
-
-//         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-//             formatter.write_str("string containing comma-separated elements")
-//         }
-
-//         fn visit_str<E>(self, s: &str) -> Result<Self::Value, E>
-//         where
-//             E: serde::de::Error,
-//         {
-//             let iter = s
-//                 .split(",")
-//                 .filter(|s| !s.is_empty())
-//                 .map(FromStr::from_str);
-//             Result::from_iter(iter).map_err(serde::de::Error::custom)
-//         }
-//     }
-
-//     let visitor = CommaSeparated(PhantomData, PhantomData);
-//     deserializer.deserialize_str(visitor)
-// }
 
 // use axum::extract::FromRequestParts;
 

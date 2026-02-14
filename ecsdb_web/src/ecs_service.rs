@@ -1,14 +1,17 @@
+use std::{collections::HashSet, fmt::Debug, marker::PhantomData};
+
 use bytes::Bytes;
 use ecsdb::EntityId;
 use http::{StatusCode, header};
 
 use http_body_util::BodyExt as _;
 use iref::iri;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use futures_util::TryStreamExt;
 use http::Method;
 use tracing::{debug, instrument};
+use url::form_urlencoded;
 
 use crate::{LastAccess, pages};
 
@@ -125,29 +128,49 @@ impl Error {
     }
 }
 
-#[derive(Deserialize, Clone, Copy, Debug)]
-pub struct Pagination {
+#[derive(Debug, Deserialize, Clone, Serialize)]
+pub(crate) struct Filter {
+    #[serde(
+        deserialize_with = "deserialize_comma_separated_string",
+        serialize_with = "serialize_comma_separated_string",
+        default
+    )]
+    pub component_names: HashSet<String>,
+
+    #[serde(default = "zero_entity_id")]
     pub after: EntityId,
+
     #[serde(default = "default_per_page")]
     pub count: usize,
+}
+
+impl Filter {
+    pub fn as_query(&self) -> String {
+        serde_urlencoded::to_string(self).unwrap()
+    }
+}
+
+impl Default for Filter {
+    fn default() -> Self {
+        Self {
+            component_names: Default::default(),
+            after: zero_entity_id(),
+            count: default_per_page(),
+        }
+    }
 }
 
 fn default_per_page() -> usize {
     20
 }
 
-impl Default for Pagination {
-    fn default() -> Self {
-        Self {
-            after: Default::default(),
-            count: 20,
-        }
-    }
+fn zero_entity_id() -> EntityId {
+    0
 }
 
 pub enum Request {
     Entities {
-        pagination: Pagination,
+        filter: Filter,
     },
     Entity(EntityId),
     Component {
@@ -196,8 +219,9 @@ impl Request {
         match (req.method(), path_components.iter().as_slice()) {
             (&Method::GET, &["entities"]) => {
                 let query = url.query().unwrap_or_default();
-                let pagination: Pagination = serde_urlencoded::from_str(query).unwrap_or_default();
-                Ok(Self::Entities { pagination })
+                let filter: Filter =
+                    serde_urlencoded::from_str(query).map_err(|e| Error::Other(Box::new(e)))?;
+                Ok(Self::Entities { filter })
             }
 
             (&Method::GET, &["entities", entity_id]) => {
@@ -270,14 +294,26 @@ impl Request {
     #[instrument(level = "debug", skip(db), ret)]
     async fn handle(&self, db: ecsdb::Ecs) -> Result<Response, Error> {
         match *self {
-            Request::Entities { pagination } => {
+            Request::Entities { ref filter } => {
                 let mut entities = db
                     .query::<ecsdb::Entity, ()>()
-                    .filter(|e| e.id() > pagination.after)
-                    .take(pagination.count)
+                    .filter(|e| e.id() > filter.after)
+                    .filter(|e| {
+                        filter.component_names.is_empty()
+                            || filter
+                                .component_names
+                                .is_subset(&e.component_names().collect())
+                    })
+                    .take(filter.count)
                     .collect::<Vec<_>>();
                 entities.sort_by_key(|e| e.id());
-                Ok(Response::Markup(pages::entities(&entities)))
+
+                let next_page = Filter {
+                    after: entities.last().map(ecsdb::Entity::id).unwrap_or_default(),
+                    ..filter.clone()
+                };
+
+                Ok(Response::Markup(pages::entities(&entities, &next_page)))
             }
             Request::Entity(eid) => {
                 let Some(entity) = db.find(eid).next() else {
@@ -391,7 +427,7 @@ impl std::fmt::Debug for Response {
 impl std::fmt::Debug for Request {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Entities { pagination } => f.debug_tuple("Entities").field(&pagination).finish(),
+            Self::Entities { filter } => f.debug_tuple("Entities").field(&filter).finish(),
             Self::Entity(eid) => f.debug_tuple("Entity").field(eid).finish(),
             Self::Component {
                 entity_id,
@@ -418,4 +454,55 @@ impl std::fmt::Debug for Request {
                 .finish(),
         }
     }
+}
+
+fn deserialize_comma_separated_string<'de, V, T, D>(deserializer: D) -> Result<V, D::Error>
+where
+    V: FromIterator<T>,
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
+    D: serde::de::Deserializer<'de>,
+{
+    struct CommaSeparated<V, T>(PhantomData<V>, PhantomData<T>);
+
+    impl<V, T> serde::de::Visitor<'_> for CommaSeparated<V, T>
+    where
+        V: FromIterator<T>,
+        T: std::str::FromStr,
+        T::Err: std::fmt::Display,
+    {
+        type Value = V;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("string containing comma-separated elements")
+        }
+
+        fn visit_str<E>(self, s: &str) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            let iter = s
+                .split(",")
+                .filter(|s| !s.is_empty())
+                .map(std::str::FromStr::from_str);
+            Result::from_iter(iter).map_err(serde::de::Error::custom)
+        }
+    }
+
+    let visitor = CommaSeparated(PhantomData, PhantomData);
+    deserializer.deserialize_str(visitor)
+}
+
+fn serialize_comma_separated_string<S, V>(value: V, ser: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+    V: IntoIterator,
+    V::Item: ToString + Debug,
+{
+    let s = value
+        .into_iter()
+        .map(|v| v.to_string()) // TODO: Urlencode
+        .collect::<Vec<_>>()
+        .join(",");
+    s.serialize(ser)
 }
