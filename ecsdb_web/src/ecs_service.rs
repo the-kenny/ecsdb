@@ -501,7 +501,7 @@ where
 {
     let s = value
         .into_iter()
-        .map(|v| v.to_string()) // TODO: Urlencode
+        .map(|v| form_urlencoded::byte_serialize(v.to_string().as_bytes()).collect::<String>())
         .collect::<Vec<_>>()
         .join(",");
     s.serialize(ser)
