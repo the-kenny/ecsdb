@@ -262,10 +262,12 @@ mod pages {
                             th { "Created" }
                             th { "Updated" }
                             th { "Components" }
+                            th { "View" }
                         }
                     }
                     tbody {
                         @for entity in entities {
+                            @let popover_id = format!("entity-{}", entity.id());
                             tr {
                                 td {
                                     a href=(format!("entities/{}", entity.id())) {
@@ -278,12 +280,26 @@ mod pages {
                                 td {
                                     (format_time(entity.last_modified()))
                                 }
-                                td  {
-                                    @let component_tooltip = entity.component_names().collect::<Vec<_>>().join("\n");
-                                    span title=(component_tooltip) {
-                                        (entity.component_names().count()) " Components"
+                                td {
+                                    (entity.component_names().count()) " Components"
+                                }
+                                td style="text-align: center" {
+                                    a class="<button>" hx-on:click=(format!("htmx.find('#{popover_id}').togglePopover()")) {
+                                        "View"
                                     }
-
+                                    dialog id=(popover_id) popover="auto" {
+                                        div class="titlebar flex-row justify-content:space-between align-items:center" {
+                                            span { "Entity " (entity.id()) }
+                                            button type="button" popovertarget=(popover_id) popovertargetaction="hide" {
+                                                "Close"
+                                            }
+                                        }
+                                        div hx-get=(format!("entities/{}", entity.id()))
+                                            hx-trigger=(format!("toggle from:#{popover_id}"))
+                                            hx-swap="innerHTML" {
+                                            "Loading..."
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -307,6 +323,7 @@ mod pages {
                     }
                 }
             }
+
         })
     }
 
@@ -383,6 +400,7 @@ mod pages {
                 head {
                     link rel="stylesheet" href="missing.css" {}
                     script src="htmx.js" r#type="application/javascript" {}
+                    style { "[popover] { max-width: 80vw; max-height: 80vh; overflow: auto; padding: 1rem; }" }
                     base href=(base_url) { }
                 }
                 body {
