@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo build -p ecsdb_cli)",
+      "Bash(cargo test)",
+      "mcp__chrome-devtools__*"
+    ]
+  }
+}
