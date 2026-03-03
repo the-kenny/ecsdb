@@ -22,6 +22,22 @@ impl Schedule {
         self
     }
 
+    pub fn system_names(&self) -> impl Iterator<Item = Cow<'static, str>> {
+        self.systems().map(System::name)
+    }
+
+    pub fn systems<'a>(&'a self) -> impl Iterator<Item = &'a BoxedSystem> + 'a {
+        self.iter().map(|(s, _m)| s)
+    }
+
+    pub fn iter<'a>(
+        &'a self,
+    ) -> impl Iterator<Item = &'a (BoxedSystem, Box<dyn SchedulingMode>)> + 'a {
+        self.0.iter()
+    }
+}
+
+impl Schedule {
     #[instrument(level = "debug", skip_all, ret, err)]
     pub fn tick<'a>(&'a self, ecs: &Ecs) -> Result<Vec<(Cow<'a, str>, TickResult)>, anyhow::Error> {
         let mut results = Vec::with_capacity(self.0.len());
@@ -49,10 +65,28 @@ impl Schedule {
         Ok(results)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &(BoxedSystem, Box<dyn SchedulingMode>)> {
-        self.0.iter()
+    /// Run a single system by name, bypassing its scheduling mode.
+    ///
+    /// Returns [`UnknownSystemError`] if no system with the given name exists
+    /// in this schedule.
+    pub fn run_system(&self, ecs: &Ecs, name: &str) -> Result<TickResult, UnknownSystemError> {
+        let Some(system) = self
+            .iter()
+            .find_map(|(system, _mode)| (system.name() == name).then_some(system))
+        else {
+            return Err(UnknownSystemError(name.into()));
+        };
+
+        match ecs.run_dyn_system(system) {
+            Ok(()) => Ok(TickResult::Ok),
+            Err(e) => Ok(TickResult::Error(e)),
+        }
     }
 }
+
+#[derive(Debug, thiserror::Error)]
+#[error("Unknown System '{0}'")]
+pub struct UnknownSystemError(pub String);
 
 #[derive(Debug)]
 pub enum TickResult {
