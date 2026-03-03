@@ -20,6 +20,9 @@ group by
 order by
     component asc;
 
+create view if not exists system_components (component) as
+values ('ecsdb::CreatedAt'), ('ecsdb::LastUpdated');
+
 -- Set ecsdb::CreatedAt on initial insert
 create trigger if not exists components_created_insert_trigger
 after insert on components
@@ -69,20 +72,21 @@ begin
         data = excluded.data;
 end;
 
--- Update ecsdb::LastUpdated on delete, but only when non-timestamp components remain
+-- Update ecsdb::LastUpdated on delete, but only when non-system components remain
 
 drop trigger if exists components_last_modified_delete_trigger;
+drop trigger if exists components_last_modified_delete_trigger_v2;
 
-create trigger if not exists components_last_modified_delete_trigger_v2
+create trigger if not exists components_last_modified_delete_trigger_v3
 after delete on components
-for each row when old.component != 'ecsdb::LastUpdated' and exists (
+for each row when old.component not in (select component from system_components) and exists (
     select
         1
     from
         components
     where
         entity = old.entity
-        and component not in ('ecsdb::LastUpdated', 'ecsdb::CreatedAt')
+        and component not in (select component from system_components)
 )
 begin
     insert into
@@ -98,27 +102,40 @@ begin
         data = excluded.data;
 end;
 
--- Delete timestamp components when only timestamps remain
+-- Delete system components when only system components remain
 
 drop trigger if exists components_last_modified_delete_last_component_trigger;
+drop trigger if exists components_last_modified_delete_last_component_trigger_v2;
 
-create trigger if not exists components_last_modified_delete_last_component_trigger_v2
+create trigger if not exists components_last_modified_delete_last_component_trigger_v3
 after delete on components
-for each row when old.component not in ('ecsdb::LastUpdated', 'ecsdb::CreatedAt') and not exists (
+for each row when old.component not in (select component from system_components) and not exists (
     select
         1
     from
         components
     where
         entity = old.entity
-        and component not in ('ecsdb::LastUpdated', 'ecsdb::CreatedAt')
+        and component not in (select component from system_components)
 )
 begin
     delete from components
     where
         entity = old.entity
-        and component in ('ecsdb::LastUpdated', 'ecsdb::CreatedAt');
+        and component in (select component from system_components);
 end;
+
+create view if not exists empty_entities (entity) as
+select
+    entity
+from
+    components
+group by
+    entity
+having
+    count(*) filter (
+        where component not in (select component from system_components)
+    ) = 0;
 
 -- Resources
 create table if not exists resources (
