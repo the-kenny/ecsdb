@@ -962,6 +962,108 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(row_count, 0, "expected no rows in components table for destroyed entity");
+        assert_eq!(
+            row_count, 0,
+            "expected no rows in components table for destroyed entity"
+        );
+    }
+
+    #[test]
+    fn destroy_single_component() {
+        #[derive(Serialize, Deserialize, Component)]
+        struct A;
+
+        let db = super::Ecs::open_in_memory().unwrap();
+        let e = db.new_entity().attach(A);
+
+        assert!(e.exists());
+        e.destroy();
+
+        assert!(!e.exists());
+        let row_count: i64 = db
+            .conn
+            .query_row(
+                "select count(*) from components where entity = ?1",
+                [e.id()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(row_count, 0);
+    }
+
+    #[test]
+    fn detach_last_component_cleans_up_timestamps() {
+        #[derive(Serialize, Deserialize, Component)]
+        struct A;
+
+        let db = super::Ecs::open_in_memory().unwrap();
+        let e = db.new_entity().attach(A);
+
+        assert!(e.exists());
+        assert!(e.has::<(CreatedAt, LastUpdated)>());
+
+        e.detach::<A>();
+
+        assert!(
+            !e.exists(),
+            "entity should not exist after detaching last component, but still has: {:?}",
+            e.component_names().collect::<Vec<_>>()
+        );
+        let row_count: i64 = db
+            .conn
+            .query_row(
+                "select count(*) from components where entity = ?1",
+                [e.id()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(row_count, 0);
+    }
+
+    #[test]
+    fn detach_partial_preserves_timestamps() {
+        #[derive(Serialize, Deserialize, Component)]
+        struct A;
+        #[derive(Serialize, Deserialize, Component)]
+        struct B;
+
+        let db = super::Ecs::open_in_memory().unwrap();
+        let e = db.new_entity().attach(A).attach(B);
+
+        assert!(e.has::<(A, B)>());
+
+        e.detach::<A>();
+
+        assert!(e.exists());
+        assert!(!e.has::<A>());
+        assert!(e.has::<(B, CreatedAt, LastUpdated)>());
+    }
+
+    #[test]
+    fn destroy_does_not_affect_other_entities() {
+        #[derive(Serialize, Deserialize, Component)]
+        struct A;
+        #[derive(Serialize, Deserialize, Component)]
+        struct B;
+
+        let db = super::Ecs::open_in_memory().unwrap();
+        let e1 = db.new_entity().attach(A);
+        let e2 = db.new_entity().attach(B);
+
+        e1.destroy();
+
+        assert!(!e1.exists());
+        assert!(e2.exists());
+        assert!(e2.has::<(B, CreatedAt, LastUpdated)>());
+
+        let row_count: i64 = db
+            .conn
+            .query_row(
+                "select count(*) from components where entity = ?1",
+                [e1.id()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(row_count, 0);
     }
 }
