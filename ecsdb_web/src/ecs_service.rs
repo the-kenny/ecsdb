@@ -144,12 +144,6 @@ pub(crate) struct Filter {
     pub count: usize,
 }
 
-impl Filter {
-    pub fn as_query(&self) -> String {
-        serde_urlencoded::to_string(self).unwrap()
-    }
-}
-
 impl Default for Filter {
     fn default() -> Self {
         Self {
@@ -313,7 +307,13 @@ impl Request {
                     ..filter.clone()
                 };
 
-                Ok(Response::Markup(pages::entities(&entities, &next_page)))
+                let all_component_names = db.component_names()?;
+
+                Ok(Response::Markup(pages::entities(
+                    &entities,
+                    &next_page,
+                    &all_component_names,
+                )))
             }
             Request::Entity(eid) => {
                 let Some(entity) = db.find(eid).next() else {
