@@ -159,7 +159,7 @@ impl Breadcrumb {
 
 mod pages {
     use maud::{Markup, html};
-    use std::{collections::BTreeSet, fmt::Display};
+    use std::fmt::Display;
 
     use crate::Breadcrumb;
     pub fn entity(entity: ecsdb::Entity) -> Markup {
@@ -229,22 +229,21 @@ mod pages {
     pub fn entities<'a>(
         entities: &[ecsdb::Entity<'a>],
         filter: &crate::ecs_service::Filter,
+        all_component_names: &[impl AsRef<str>],
     ) -> Markup {
-        let component_names = entities
+        let mut all_component_names = all_component_names
             .iter()
-            .flat_map(|e| e.component_names())
-            .collect::<BTreeSet<_>>();
-
-        let next_link = format!("entities?{}", filter.as_query());
-
+            .map(AsRef::as_ref)
+            .collect::<Vec<_>>();
+        all_component_names.sort();
         html!({
             form {
                 label {
                     "Component"
                     select name="component_names" {
                         option value="" selected[filter.component_names.is_empty()] { "-" }
-                        @for component_name in (component_names) {
-                            @let selected = filter.component_names.contains(&component_name);
+                        @for component_name in all_component_names {
+                            @let selected = filter.component_names.contains(component_name);
                             option value=(component_name) selected[selected] { (component_name) }
                         }
                     }
@@ -312,7 +311,7 @@ mod pages {
                                            name="after"
                                            value=(filter.after)
                                            hx-target="#entity-table>tbody"
-                                           hx-get="entities"
+                                           hx-get="entities"v
                                            hx-swap="beforeend"
                                            hx-select="#entity-table>tbody>tr" {
                                         "Next"
