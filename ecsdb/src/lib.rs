@@ -367,7 +367,7 @@ pub mod doctests {
 #[cfg(test)]
 mod tests {
     // #[derive(Component)] derives `impl ecsdb::Component for ...`
-    use crate::{self as ecsdb, CreatedAt, Ecs, Entity, EntityId};
+    use crate::{self as ecsdb, CreatedAt, Ecs, Entity, EntityId, LastUpdated};
     use crate::{Bundle, Component};
 
     use anyhow::anyhow;
@@ -927,5 +927,41 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn destroy() {
+        #[derive(Serialize, Deserialize, Component)]
+        struct A;
+        #[derive(Serialize, Deserialize, Component)]
+        struct B;
+
+        let db = super::Ecs::open_in_memory().unwrap();
+        let e = db.new_entity().attach(A).attach(B);
+
+        assert!(e.exists());
+        assert!(e.has::<CreatedAt>());
+        assert!(e.has::<LastUpdated>());
+
+        e.destroy();
+
+        assert!(
+            !e.exists(),
+            "entity should not exist after destroy, but still has components: {:?}",
+            e.component_names().collect::<Vec<_>>()
+        );
+        assert!(!e.has::<LastUpdated>());
+        assert!(!e.has::<CreatedAt>());
+        assert_eq!(e.component_names().count(), 0);
+
+        let row_count: i64 = db
+            .conn
+            .query_row(
+                "select count(*) from components where entity = ?1",
+                [e.id()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(row_count, 0, "expected no rows in components table for destroyed entity");
     }
 }
