@@ -100,6 +100,16 @@ impl Ecs {
                 x.get("data_version")
             })?)
     }
+
+    pub fn component_names(&self) -> Result<Box<[String]>, Error> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT component FROM components ORDER BY component")?;
+        let names = stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<_, _>>()?;
+        Ok(names)
+    }
 }
 
 impl Ecs {
