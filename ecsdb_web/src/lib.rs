@@ -255,7 +255,7 @@ mod pages {
 
                 button type="submit" name="after" value="0" { "Apply "}
 
-                table {
+                table id="entity-table" {
                     thead {
                         tr {
                             th { "EntityId" }
@@ -311,10 +311,10 @@ mod pages {
                                     button type="submit"
                                            name="after"
                                            value=(filter.after)
-                                           hx-target="previous tbody"
+                                           hx-target="#entity-table>tbody"
                                            hx-get="entities"
                                            hx-swap="beforeend"
-                                           hx-select="tbody>tr" {
+                                           hx-select="#entity-table>tbody>tr" {
                                         "Next"
                                     }
                                 }
