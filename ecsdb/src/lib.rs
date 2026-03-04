@@ -1076,4 +1076,61 @@ mod tests {
             .unwrap();
         assert_eq!(row_count, 0);
     }
+
+    #[test]
+    fn try_detach_all_removes_all_components() {
+        let db = Ecs::open_in_memory().unwrap();
+        let e = db.new_entity().attach(A).attach(B).attach(C);
+
+        assert!(e.has::<(A, B, C)>());
+
+        e.try_detach_all().unwrap();
+
+        assert!(!e.has::<A>());
+        assert!(!e.has::<B>());
+        assert!(!e.has::<C>());
+        assert!(
+            !e.exists(),
+            "entity should not exist after detach_all components={:?}",
+            e.component_names().collect::<Vec<_>>()
+        );
+
+        let row_count: i64 = db
+            .conn
+            .query_row(
+                "select count(*) from components where entity = ?1",
+                [e.id()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(row_count, 0);
+    }
+
+    #[test]
+    fn detach_all_removes_all_components() {
+        let db = Ecs::open_in_memory().unwrap();
+        let e = db.new_entity().attach(A).attach(B).attach(C);
+
+        assert!(e.has::<(A, B, C)>());
+
+        e.detach_all();
+
+        assert!(!e.has::<A>());
+        assert!(!e.has::<B>());
+        assert!(!e.has::<C>());
+        assert!(!e.exists());
+    }
+
+    #[test]
+    fn detach_all_does_not_affect_other_entities() {
+        let db = Ecs::open_in_memory().unwrap();
+        let e1 = db.new_entity().attach(A).attach(B);
+        let e2 = db.new_entity().attach(A).attach(C);
+
+        e1.detach_all();
+
+        assert!(!e1.exists());
+        assert!(e2.exists());
+        assert!(e2.has::<(A, C, CreatedAt, LastUpdated)>());
+    }
 }

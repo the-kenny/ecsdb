@@ -292,6 +292,24 @@ impl<'a> Entity<'a> {
 }
 
 impl<'a> Entity<'a> {
+    #[tracing::instrument(name = "detach_all", level = "debug")]
+    pub fn detach_all(self) -> Self {
+        self.try_detach_all().expect("Entity::try_detach_all");
+        self
+    }
+
+    #[tracing::instrument(name = "detach_all", level = "debug")]
+    pub fn try_detach_all(self) -> Result<Self, Error> {
+        self
+            .0
+            .conn
+            .execute("delete from components where entity = ?1 and component not in (select component from system_components)", params![self.id()])?;
+
+        Ok(self)
+    }
+}
+
+impl<'a> Entity<'a> {
     pub fn or_none(self) -> Option<Self> {
         self.exists().then_some(self)
     }
