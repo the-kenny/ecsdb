@@ -5,7 +5,7 @@ use crate::{Entity, EntityId, component::Bundle};
 use super::Component;
 use std::marker::PhantomData;
 
-pub(crate) mod ir;
+pub mod ir;
 
 pub trait QueryData {
     type Output<'a>: Sized;
@@ -244,6 +244,12 @@ impl<C: Component> QueryFilter for Without<C> {
 impl QueryFilterValue for () {
     fn filter_expression(&self) -> ir::FilterExpression {
         ir::FilterExpression::None
+    }
+}
+
+impl QueryFilterValue for ir::FilterExpression {
+    fn filter_expression(&self) -> ir::FilterExpression {
+        self.clone()
     }
 }
 

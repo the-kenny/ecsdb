@@ -36,7 +36,7 @@ impl Query {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum FilterExpression {
     None,
 
@@ -193,37 +193,31 @@ impl FilterExpression {
                 use rusqlite::types::Value;
 
                 let (range_filter_condition, mut params) = match (start, end) {
-                    (Value::Null, Value::Null) => (
-                        "c2.data is null",
-                        vec![]
+                    (Value::Null, Value::Null) => ("c2.data is null", vec![]),
+                    (Value::Null, end) => (
+                        "velodb_extract_data(c2.data) <= velodb_extract_data(?2)",
+                        vec![("?2", Box::new(end.to_owned()) as _)],
                     ),
-                    (Value::Null, end) =>  (
-                            "velodb_extract_data(c2.data) <= velodb_extract_data(?2)",
-                            vec![
-                                ("?2", Box::new(end.to_owned()) as _),
-                            ],
-                        ),
-                    (start, Value::Null) =>  (
-                            "velodb_extract_data(c2.data) >= velodb_extract_data(?2)",
-                            vec![
-                                ("?2", Box::new(start.to_owned()) as _),
-                            ],
-                        ),
+                    (start, Value::Null) => (
+                        "velodb_extract_data(c2.data) >= velodb_extract_data(?2)",
+                        vec![("?2", Box::new(start.to_owned()) as _)],
+                    ),
 
-                    (start, end) =>  (
-                            "velodb_extract_data(c2.data) between velodb_extract_data(?2) and velodb_extract_data(?3)",
-                            vec![
-                                ("?2", Box::new(start.to_owned()) as _),
-                                ("?3", Box::new(end.to_owned()) as _),
-                            ],
-                        ),
+                    (start, end) => (
+                        "velodb_extract_data(c2.data) between velodb_extract_data(?2) and velodb_extract_data(?3)",
+                        vec![
+                            ("?2", Box::new(start.to_owned()) as _),
+                            ("?3", Box::new(end.to_owned()) as _),
+                        ],
+                    ),
                 };
 
-                let sql = format!("(select true from components c2 where c2.entity = components.entity and c2.component = ?component and {range_filter_condition})");
+                let sql = format!(
+                    "(select true from components c2 where c2.entity = components.entity and c2.component = ?component and {range_filter_condition})"
+                );
                 params.push(("?component", Box::new(component.to_owned()) as _));
                 SqlFragment::new(&sql, params)
             }
-
             FilterExpression::And(exprs) => Self::combine_exprs("and", exprs),
             FilterExpression::Or(exprs) => Self::combine_exprs("or", exprs),
         }

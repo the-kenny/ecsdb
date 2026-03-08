@@ -1,0 +1,21 @@
+---
+source: ecsdb_cli/src/bin/ecsdb.rs
+description: "Pipeline::parse(\"all|filter(entity != 42)\")"
+expression: "Pipeline::parse(pipeline)"
+---
+Ok(
+    Pipeline {
+        stages: [
+            All,
+            Filter(
+                Eq {
+                    column: Entity,
+                    op: Ne,
+                    value: Integer(
+                        42,
+                    ),
+                },
+            ),
+        ],
+    },
+)

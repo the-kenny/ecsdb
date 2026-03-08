@@ -84,6 +84,7 @@ pub fn main() -> Result<(), anyhow::Error> {
         &Entities,
         &Components,
         &RegisteredSystems,
+        &QueryCommand,
     ];
 
     if let Some(command) = cli.command {
@@ -325,11 +326,11 @@ impl SqliteExecute {
             for col in &cols {
                 let val = row.get_ref(col.as_str())?;
                 let val: Box<dyn Display> = match val {
-                    rusqlite::types::ValueRef::Null => Box::new("NULL"),
-                    rusqlite::types::ValueRef::Integer(n) => Box::new(n),
-                    rusqlite::types::ValueRef::Real(r) => Box::new(r),
-                    rusqlite::types::ValueRef::Text(text) => Box::new(str::from_utf8(text)?),
-                    rusqlite::types::ValueRef::Blob(items) => {
+                    ecsdb::rusqlite::types::ValueRef::Null => Box::new("NULL"),
+                    ecsdb::rusqlite::types::ValueRef::Integer(n) => Box::new(n),
+                    ecsdb::rusqlite::types::ValueRef::Real(r) => Box::new(r),
+                    ecsdb::rusqlite::types::ValueRef::Text(text) => Box::new(str::from_utf8(text)?),
+                    ecsdb::rusqlite::types::ValueRef::Blob(items) => {
                         Box::new(format!("Blob<{} bytes>", items.len()))
                     }
                 };
@@ -352,5 +353,477 @@ impl Command for SqliteExecute {
         let sql = input.trim_start_matches(self.name()).trim();
         Self::run(db.raw_sql(), sql).map_err(|e| CommandError::CommandFailed(e.into()))?;
         Ok(())
+    }
+}
+
+// --- Pipe-based query language ---
+
+mod pipeline {
+
+    use ecsdb::{Ecs, Entity};
+    use nom::bytes::complete::take_while;
+    use serde_json::json;
+    use tracing::warn;
+
+    #[derive(Debug)]
+    pub struct Pipeline {
+        pub stages: Vec<Stage>,
+    }
+
+    impl Pipeline {
+        pub fn parse(input: &str) -> Result<Self, ParseError> {
+            use nom::{
+                IResult, Parser,
+                branch::alt,
+                bytes::complete::{tag, tag_no_case, take_while1},
+                character::complete::{char, digit1, multispace0},
+                combinator::{map, opt},
+                multi::separated_list1,
+                sequence::{delimited, preceded},
+            };
+
+            fn ws<'a, O>(
+                inner: impl Parser<&'a str, Output = O, Error = nom::error::Error<&'a str>>,
+            ) -> impl Parser<&'a str, Output = O, Error = nom::error::Error<&'a str>> {
+                delimited(multispace0, inner, multispace0)
+            }
+
+            fn single_quoted_string(input: &str) -> IResult<&str, &str> {
+                let (input, _) = char('\'').parse(input)?;
+                let (input, s) = take_while(|c| c != '\'').parse(input)?;
+                let (input, _) = char('\'').parse(input)?;
+                Ok((input, s))
+            }
+
+            fn double_quoted_string(input: &str) -> IResult<&str, &str> {
+                let (input, _) = char('"').parse(input)?;
+                let (input, s) = take_while(|c| c != '"').parse(input)?;
+                let (input, _) = char('"').parse(input)?;
+                Ok((input, s))
+            }
+
+            fn quoted_string(input: &str) -> IResult<&str, &str> {
+                alt((single_quoted_string, double_quoted_string)).parse(input)
+            }
+
+            fn float_literal(input: &str) -> IResult<&str, FilterValue> {
+                let (input, int_part) = digit1.parse(input)?;
+                let (input, _) = char('.').parse(input)?;
+                let (input, frac_part) = digit1.parse(input)?;
+                let f: f64 = format!("{int_part}.{frac_part}").parse().unwrap();
+                Ok((input, FilterValue(json!(f))))
+            }
+
+            fn value_literal(input: &str) -> IResult<&str, FilterValue> {
+                alt((
+                    map(tag("null"), |_| FilterValue(serde_json::Value::Null)),
+                    map(tag("true"), |_| FilterValue(serde_json::Value::Bool(true))),
+                    map(tag("false"), |_| {
+                        FilterValue(serde_json::Value::Bool(false))
+                    }),
+                    map(quoted_string, |s: &str| {
+                        FilterValue(serde_json::Value::String(s.to_owned()))
+                    }),
+                    float_literal,
+                    map(digit1, |n: &str| {
+                        FilterValue(serde_json::Value::Number(n.parse().unwrap()))
+                    }),
+                ))
+                .parse(input)
+            }
+
+            fn cmp_op(input: &str) -> IResult<&str, FilterOperator> {
+                alt((
+                    map(tag("=="), |_| FilterOperator::Eq),
+                    map(tag("!="), |_| FilterOperator::Ne),
+                    map(tag("<="), |_| FilterOperator::Le),
+                    map(tag(">="), |_| FilterOperator::Ge),
+                    map(tag("<"), |_| FilterOperator::Lt),
+                    map(tag(">"), |_| FilterOperator::Gt),
+                ))
+                .parse(input)
+            }
+
+            fn filter_column(input: &str) -> IResult<&str, FilterColumn> {
+                alt((
+                    map(tag("entity"), |_| FilterColumn::Entity),
+                    map(tag("component"), |_| FilterColumn::Component),
+                    map(tag("data"), |_| FilterColumn::Data),
+                ))
+                .parse(input)
+            }
+
+            fn comparison(input: &str) -> IResult<&str, FilterExpression> {
+                let (input, col) = ws(filter_column).parse(input)?;
+                let (input, op) = ws(cmp_op).parse(input)?;
+                let (input, val) = ws(value_literal).parse(input)?;
+                Ok((
+                    input,
+                    FilterExpression::Eq {
+                        column: col,
+                        op,
+                        value: val,
+                    },
+                ))
+            }
+
+            fn filter_atom(input: &str) -> IResult<&str, FilterExpression> {
+                let (input, _) = multispace0.parse(input)?;
+                alt((
+                    delimited(ws(char('(')), filter_or, ws(char(')'))),
+                    comparison,
+                ))
+                .parse(input)
+            }
+
+            fn filter_and(input: &str) -> IResult<&str, FilterExpression> {
+                let (input, first) = filter_atom(input)?;
+                let (input, rest) =
+                    nom::multi::many0(preceded(ws(tag("&&")), filter_atom)).parse(input)?;
+                Ok((
+                    input,
+                    rest.into_iter().fold(first, |acc, next| {
+                        FilterExpression::And(Box::new(acc), Box::new(next))
+                    }),
+                ))
+            }
+
+            fn filter_or(input: &str) -> IResult<&str, FilterExpression> {
+                let (input, first) = filter_and(input)?;
+                let (input, rest) =
+                    nom::multi::many0(preceded(ws(tag("||")), filter_and)).parse(input)?;
+                Ok((
+                    input,
+                    rest.into_iter().fold(first, |acc, next| {
+                        FilterExpression::Or(Box::new(acc), Box::new(next))
+                    }),
+                ))
+            }
+
+            fn filter_stage(input: &str) -> IResult<&str, Stage> {
+                let (input, _) = ws(tag("filter")).parse(input)?;
+                let (input, expr) = delimited(char('('), ws(filter_or), char(')')).parse(input)?;
+                Ok((input, Stage::Filter(expr)))
+            }
+
+            fn sort_stage(input: &str) -> IResult<&str, Stage> {
+                let (input, _) = ws(tag_no_case("sortBy")).parse(input)?;
+                let (input, _) = char('(').parse(input)?;
+                let (input, _) = multispace0.parse(input)?;
+                let (input, field) = alt((
+                    map(tag_no_case("created_at"), |_| SortField::CreatedAt),
+                    map(tag_no_case("last_modified"), |_| SortField::LastModified),
+                    map(filter_column, SortField::Column),
+                ))
+                .parse(input)?;
+                let (input, _) = multispace0.parse(input)?;
+                let (input, order) = opt(alt((
+                    map(tag_no_case("asc"), |_| SortOrder::Asc),
+                    map(tag_no_case("desc"), |_| SortOrder::Desc),
+                )))
+                .parse(input)?;
+                let (input, _) = multispace0.parse(input)?;
+                let (input, _) = char(')').parse(input)?;
+                Ok((input, Stage::SortBy(field, order.unwrap_or(SortOrder::Asc))))
+            }
+
+            fn take_stage(input: &str) -> IResult<&str, Stage> {
+                let (input, _) = ws(tag("take")).parse(input)?;
+                let (input, n) = delimited(char('('), ws(digit1), char(')')).parse(input)?;
+                let n: usize = n.parse().unwrap();
+                Ok((input, Stage::Take(n)))
+            }
+
+            fn skip_stage(input: &str) -> IResult<&str, Stage> {
+                let (input, _) = ws(tag("skip")).parse(input)?;
+                let (input, n) = delimited(char('('), ws(digit1), char(')')).parse(input)?;
+                let n: usize = n.parse().unwrap();
+                Ok((input, Stage::Skip(n)))
+            }
+
+            fn stage(input: &str) -> IResult<&str, Stage> {
+                alt((
+                    map(ws(tag("all")), |_| Stage::All),
+                    filter_stage,
+                    sort_stage,
+                    take_stage,
+                    skip_stage,
+                ))
+                .parse(input)
+            }
+
+            fn parse_pipeline(input: &str) -> IResult<&str, Pipeline> {
+                let (input, stages) = separated_list1(ws(char('|')), stage).parse(input)?;
+                let (input, _) = multispace0.parse(input)?;
+                Ok((input, Pipeline { stages }))
+            }
+
+            let (remaining, pipe) =
+                parse_pipeline(input).map_err(|e| ParseError(format!("{e}")))?;
+
+            if !remaining.trim().is_empty() {
+                return Err(ParseError(format!(
+                    "Unexpected trailing input: '{remaining}'"
+                )));
+            }
+
+            Ok(pipe)
+        }
+    }
+
+    #[derive(thiserror::Error, Debug)]
+    #[error("Parse Error: {0}")]
+    pub struct ParseError(pub String);
+
+    #[derive(Debug)]
+    pub enum Stage {
+        All,
+        Filter(FilterExpression),
+        SortBy(SortField, SortOrder),
+        Take(usize),
+        Skip(usize),
+    }
+
+    impl Stage {
+        pub fn apply<'a>(
+            self,
+            db: &'a Ecs,
+            chain: impl Iterator<Item = Row<'a>> + 'a,
+        ) -> impl Iterator<Item = Row<'a>> + 'a {
+            match self {
+                Stage::All => {
+                    let rows = db.query::<Entity, ()>().flat_map(|entity| {
+                        entity
+                            .component_names()
+                            .map(move |component| Row { entity, component })
+                    });
+                    Box::new(rows) as Box<dyn Iterator<Item = _>>
+                }
+                Stage::Filter(filter) => {
+                    Box::new(filter.apply(chain)) as Box<dyn Iterator<Item = _>>
+                }
+                Stage::SortBy(field, order) => {
+                    let mut intermediate: Vec<_> = chain.collect();
+                    intermediate.sort_unstable_by(|a, b| {
+                        let a = (
+                            field.extract(a).0.to_string(),
+                            a.entity.id(),
+                            a.component.as_str(),
+                        );
+                        let b = (
+                            field.extract(b).0.to_string(),
+                            b.entity.id(),
+                            b.component.as_str(),
+                        );
+                        let result = a.partial_cmp(&b).unwrap_or(std::cmp::Ordering::Equal);
+                        match order {
+                            SortOrder::Asc => result,
+                            SortOrder::Desc => result.reverse(),
+                        }
+                    });
+                    Box::new(intermediate.into_iter())
+                }
+                Stage::Take(n) => Box::new(chain.take(n)),
+                Stage::Skip(n) => Box::new(chain.skip(n)),
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    pub enum SortField {
+        Column(FilterColumn),
+        CreatedAt,
+        LastModified,
+    }
+
+    impl SortField {
+        fn extract(self, row: &Row<'_>) -> FilterValue {
+            match self {
+                Self::Column(column) => column.extract(row),
+                Self::CreatedAt => FilterValue(serde_json::Value::String(
+                    row.entity.created_at().to_rfc3339(),
+                )),
+                Self::LastModified => FilterValue(serde_json::Value::String(
+                    row.entity.last_modified().to_rfc2822(),
+                )),
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    pub enum SortOrder {
+        Asc,
+        Desc,
+    }
+
+    #[derive(Debug, PartialEq)]
+    pub struct FilterValue(serde_json::Value);
+
+    #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+    pub enum FilterColumn {
+        Entity,
+        Component,
+        Data,
+    }
+
+    impl FilterColumn {
+        #[tracing::instrument(level = "debug")]
+        fn extract(self, row: &Row) -> FilterValue {
+            match self {
+                FilterColumn::Entity => {
+                    FilterValue(serde_json::Value::Number(row.entity.id().into()))
+                }
+                FilterColumn::Component => {
+                    FilterValue(serde_json::Value::String(row.component.clone()))
+                }
+                FilterColumn::Data => {
+                    let Some(c) = row.entity.dyn_component(&row.component) else {
+                        warn!("Failed to get DynComponent");
+                        return FilterValue(serde_json::Value::Null);
+                    };
+
+                    match c.kind() {
+                        ecsdb::dyn_component::Kind::Json => FilterValue(c.as_json().unwrap()),
+                        ecsdb::dyn_component::Kind::Blob => unimplemented!("Filter on BLOB"),
+                        ecsdb::dyn_component::Kind::Null => FilterValue(serde_json::Value::Null),
+                        ecsdb::dyn_component::Kind::Other(r#type) => {
+                            unimplemented!("Filter on {:?}", r#type)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum FilterOperator {
+        Eq,
+        Ne,
+        Lt,
+        Le,
+        Gt,
+        Ge,
+    }
+
+    #[derive(Debug)]
+    pub enum FilterExpression {
+        Eq {
+            column: FilterColumn,
+            op: FilterOperator,
+            value: FilterValue,
+        },
+        And(Box<FilterExpression>, Box<FilterExpression>),
+        Or(Box<FilterExpression>, Box<FilterExpression>),
+    }
+
+    impl FilterExpression {
+        pub fn matches(&self, row: &Row<'_>) -> bool {
+            match self {
+                Self::Eq {
+                    column,
+                    op: FilterOperator::Eq,
+                    value,
+                } => column.extract(row) == *value,
+                Self::Eq {
+                    column,
+                    op: FilterOperator::Ne,
+                    value,
+                } => column.extract(row) != *value,
+                Self::Eq { column, op, value } => todo!(),
+                Self::And(a, b) => a.matches(row) && b.matches(row),
+                Self::Or(a, b) => a.matches(row) || b.matches(row),
+            }
+        }
+
+        pub fn apply<'a, C>(self, chain: C) -> impl Iterator<Item = C::Item>
+        where
+            C: Iterator<Item = Row<'a>>,
+        {
+            chain.filter(move |row| self.matches(row))
+        }
+    }
+
+    /// A row in the pipeline — always a full entity with all its components.
+    #[derive(Debug)]
+    pub struct Row<'a> {
+        entity: ecsdb::Entity<'a>,
+        component: String,
+    }
+
+    impl std::fmt::Display for Row<'_> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            let Self { entity, component } = self;
+            let data = entity
+                .dyn_component(component)
+                .and_then(|c| c.as_json())
+                .unwrap_or_default();
+            f.write_fmt(format_args!("{entity}\t|\t{component}\t|\t{data}"))
+        }
+    }
+}
+
+#[derive(Debug)]
+struct QueryCommand;
+
+impl QueryCommand {
+    fn execute_pipeline(db: &Ecs, input: &str) -> Result<(), anyhow::Error> {
+        use pipeline::*;
+
+        let pipeline = Pipeline::parse(input)?;
+
+        debug!(?pipeline);
+
+        let chain = pipeline.stages.into_iter().fold(
+            Box::new(std::iter::empty()) as Box<dyn Iterator<Item = Row>>,
+            |chain, link: Stage| Box::new(link.apply(db, chain)),
+        );
+
+        for row in chain {
+            println!("{row}");
+        }
+
+        Ok(())
+    }
+}
+
+impl Command for QueryCommand {
+    fn name(&self) -> &'static str {
+        "query"
+    }
+
+    fn execute(&self, db: &Ecs, input: &str) -> CommandResult {
+        let query_input = input.trim_start_matches(self.name()).trim();
+        if query_input.is_empty() {
+            println!("Usage: query all | filter(component = 'Foo') | sortBy(entity) | take(10)");
+            return Ok(());
+        }
+        Self::execute_pipeline(db, query_input).map_err(CommandError::CommandFailed)?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use insta::assert_debug_snapshot;
+
+    use super::pipeline::*;
+
+    const PIPELINES: &[&str] = &[
+        "all",
+        "all|filter(entity == 42)",
+        "all|filter(entity != 42)",
+        "all | filter(entity == 42) | filter(entity == 23)",
+        "all | take(23)",
+        "all | skip(1)",
+        "all | skip(1) | sortBy(last_modified)",
+    ];
+
+    #[test]
+    fn query_filters() {
+        for &pipeline in PIPELINES {
+            insta::with_settings!({ snapshot_suffix => pipeline, description => format!("Pipeline::parse(\"{pipeline}\")") }, {
+                assert_debug_snapshot!(Pipeline::parse(pipeline))
+            });
+        }
     }
 }
