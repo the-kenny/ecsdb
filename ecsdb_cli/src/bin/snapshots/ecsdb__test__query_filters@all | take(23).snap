@@ -1,0 +1,15 @@
+---
+source: ecsdb_cli/src/bin/ecsdb.rs
+description: "Pipeline::parse(\"all | take(23)\")"
+expression: "Pipeline::parse(pipeline)"
+---
+Ok(
+    Pipeline {
+        stages: [
+            All,
+            Take(
+                23,
+            ),
+        ],
+    },
+)

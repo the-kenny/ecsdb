@@ -1,0 +1,19 @@
+---
+source: ecsdb_cli/src/bin/ecsdb.rs
+description: "Pipeline::parse(\"all | skip(1) | sortBy(last_modified)\")"
+expression: "Pipeline::parse(pipeline)"
+---
+Ok(
+    Pipeline {
+        stages: [
+            All,
+            Skip(
+                1,
+            ),
+            SortBy(
+                LastModified,
+                Asc,
+            ),
+        ],
+    },
+)

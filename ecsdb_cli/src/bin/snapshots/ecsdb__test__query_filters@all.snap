@@ -1,0 +1,12 @@
+---
+source: ecsdb_cli/src/bin/ecsdb.rs
+description: "Pipeline::parse(\"all\")"
+expression: "Pipeline::parse(pipeline)"
+---
+Ok(
+    Pipeline {
+        stages: [
+            All,
+        ],
+    },
+)
