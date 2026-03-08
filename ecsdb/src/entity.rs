@@ -33,16 +33,16 @@ impl<'a, T> GenericEntity<'a, T> {
 }
 
 impl<'a> Entity<'a> {
-    pub fn id(&self) -> EntityId {
+    pub fn id(self) -> EntityId {
         (self.1).0
     }
 
-    pub fn exists(&self) -> bool {
+    pub fn exists(self) -> bool {
         self.try_exists().expect("Entity::try_exists")
     }
 
     #[tracing::instrument(name = "exists", level = "debug")]
-    pub fn try_exists(&self) -> Result<bool, Error> {
+    pub fn try_exists(self) -> Result<bool, Error> {
         self.0
             .conn
             .query_row(
@@ -55,34 +55,34 @@ impl<'a> Entity<'a> {
             .map_err(Error::from)
     }
 
-    pub fn created_at(&self) -> chrono::DateTime<chrono::Utc> {
+    pub fn created_at(self) -> chrono::DateTime<chrono::Utc> {
         self.try_created_at().expect("Non-Error")
     }
 
     #[tracing::instrument(name = "created_at", level = "debug")]
-    pub fn try_created_at(&self) -> Result<chrono::DateTime<chrono::Utc>, Error> {
+    pub fn try_created_at(self) -> Result<chrono::DateTime<chrono::Utc>, Error> {
         self.try_component()
             .map(Option::unwrap_or_default)
             .map(|CreatedAt(lu)| lu)
     }
 
-    pub fn last_modified(&self) -> chrono::DateTime<chrono::Utc> {
+    pub fn last_modified(self) -> chrono::DateTime<chrono::Utc> {
         self.try_last_modified().expect("Non-Error")
     }
 
     #[tracing::instrument(name = "last_modified", level = "debug")]
-    pub fn try_last_modified(&self) -> Result<chrono::DateTime<chrono::Utc>, Error> {
+    pub fn try_last_modified(self) -> Result<chrono::DateTime<chrono::Utc>, Error> {
         self.try_component()
             .map(Option::unwrap_or_default)
             .map(|LastUpdated(lu)| lu)
     }
 
-    pub fn component_names(&self) -> impl Iterator<Item = String> {
+    pub fn component_names(self) -> impl Iterator<Item = String> {
         self.try_component_names().unwrap()
     }
 
     #[tracing::instrument(name = "component_names", level = "debug")]
-    pub fn try_component_names(&self) -> Result<impl Iterator<Item = String>, Error> {
+    pub fn try_component_names(self) -> Result<impl Iterator<Item = String>, Error> {
         let mut stmt = self
             .0
             .conn
@@ -93,15 +93,15 @@ impl<'a> Entity<'a> {
         Ok(names.into_iter())
     }
 
-    pub fn has<B: Bundle>(&self) -> bool {
+    pub fn has<B: Bundle>(self) -> bool {
         self.try_has::<B>().unwrap()
     }
 
-    pub fn try_has<B: Bundle>(&self) -> Result<bool, Error> {
+    pub fn try_has<B: Bundle>(self) -> Result<bool, Error> {
         self.has_all_dynamic(B::COMPONENTS)
     }
 
-    fn has_all_dynamic(&self, component_names: &[&str]) -> Result<bool, Error> {
+    fn has_all_dynamic(self, component_names: &[&str]) -> Result<bool, Error> {
         let mut stmt = self
             .0
             .conn
@@ -132,14 +132,14 @@ impl<'a> Entity<'a> {
 }
 
 impl<'a> Entity<'a> {
-    pub fn component<T: Component>(&self) -> Option<T> {
+    pub fn component<T: Component>(self) -> Option<T> {
         match self.try_component::<T>() {
             Ok(c) => c,
             Err(e) => panic!("Failed to get Component {}: {e}", T::NAME),
         }
     }
 
-    pub fn try_component<T: Component>(&self) -> Result<Option<T>, Error> {
+    pub fn try_component<T: Component>(self) -> Result<Option<T>, Error> {
         let name = T::component_name();
         let mut query = self
             .0
@@ -159,11 +159,11 @@ impl<'a> Entity<'a> {
 }
 
 impl<'a> Entity<'a> {
-    pub fn dyn_component(&self, name: &'a str) -> Option<DynComponent<'a>> {
+    pub fn dyn_component(self, name: &'a str) -> Option<DynComponent<'a>> {
         self.try_dyn_component(name).unwrap()
     }
 
-    pub fn try_dyn_component(&self, name: &'a str) -> Result<Option<DynComponent<'a>>, Error> {
+    pub fn try_dyn_component(self, name: &'a str) -> Result<Option<DynComponent<'a>>, Error> {
         let mut query = self
             .0
             .conn
@@ -180,41 +180,43 @@ impl<'a> Entity<'a> {
             .next()
             .transpose()
     }
+}
 
-    pub fn dyn_attach(&self, component: DynComponent<'a>) -> Self {
+impl<'a> Entity<'a> {
+    pub fn dyn_attach(self, component: DynComponent<'a>) -> Self {
         self.try_dyn_attach(component)
             .expect("Entity::try_dyn_attach")
     }
 
-    pub fn try_dyn_attach(&self, component: DynComponent<'a>) -> Result<Self, Error> {
+    pub fn try_dyn_attach(self, component: DynComponent<'a>) -> Result<Self, Error> {
         let mut query = self.0.conn.prepare_cached(
             "update components set data = ?1 where entity = ?2 and component = ?3",
         )?;
 
         query.execute(params![component.1, self.id(), component.0])?;
-        Ok(*self)
+        Ok(self)
     }
 }
 
 impl<'a> Entity<'a> {
-    pub fn detach_named(&self, component: &str) -> Self {
+    pub fn detach_named(self, component: &str) -> Self {
         self.try_detach_named(component)
             .expect("Entity::try_detach_named")
     }
 
-    pub fn try_detach_named(&self, component: &str) -> Result<Self, Error> {
+    pub fn try_detach_named(self, component: &str) -> Result<Self, Error> {
         let mut query = self
             .0
             .conn
             .prepare_cached("delete from components where entity = ?1 and component = ?2")?;
 
         query.execute(params![self.id(), component])?;
-        Ok(*self)
+        Ok(self)
     }
 }
 
 impl<'a> Entity<'a> {
-    pub fn modify_component<C: Component + Default>(&self, f: impl FnOnce(&mut C)) -> Self {
+    pub fn modify_component<C: Component + Default>(self, f: impl FnOnce(&mut C)) -> Self {
         self.try_modify_component(|c| {
             f(c);
             Ok(())
@@ -225,7 +227,7 @@ impl<'a> Entity<'a> {
     // TODO: Race Condition; needs refactoring to make Entity generic over
     // `rusqlite::Connection` and `rusqlite::Transaction`
     pub fn try_modify_component<C: Component + Default>(
-        &self,
+        self,
         f: impl FnOnce(&mut C) -> Result<(), anyhow::Error>,
     ) -> Result<Self, ModifyComponentError> {
         let mut component = self.try_component()?.unwrap_or_default();
@@ -243,21 +245,21 @@ pub enum ModifyComponentError {
 }
 
 impl<'a> Entity<'a> {
-    pub fn try_matches<D: query::QueryFilter>(&self) -> Result<bool, Error> {
+    pub fn try_matches<D: query::QueryFilter>(self) -> Result<bool, Error> {
         let q = query::Query::<(), D, EntityId>::with_filter(self.db(), self.id());
         Ok(q.try_iter()?.next().is_some())
     }
 
-    pub fn matches<D: query::QueryFilter>(&self) -> bool {
+    pub fn matches<D: query::QueryFilter>(self) -> bool {
         self.try_matches::<D>().unwrap()
     }
 
-    // pub fn try_matches_filtered<F: query::QueryFilter>(&self, filter: F) -> Result<bool, Error> {
+    // pub fn try_matches_filtered<F: query::QueryFilter>(self, filter: F) -> Result<bool, Error> {
     //     let q = query::Query::<(), F>::new(self.db(), filter);
     //     Ok(q.try_iter()?.next().is_some())
     // }
 
-    // pub fn matches_filtered<F: query::QueryFilter>(&self, filter: F) -> bool {
+    // pub fn matches_filtered<F: query::QueryFilter>(self, filter: F) -> bool {
     //     self.try_matches_filtered::<F>(filter).unwrap()
     // }
 }
@@ -355,7 +357,7 @@ impl<'a> NewEntity<'a> {
         self
     }
 
-    pub fn component_names(&self) -> impl Iterator<Item = String> {
+    pub fn component_names(self) -> impl Iterator<Item = String> {
         std::iter::empty()
     }
 
@@ -406,13 +408,13 @@ impl<'a> NewEntity<'a> {
     }
 
     #[tracing::instrument(name = "component_names", level = "debug")]
-    pub fn try_component_names(&self) -> Result<impl Iterator<Item = String>, Error> {
+    pub fn try_component_names(self) -> Result<impl Iterator<Item = String>, Error> {
         Ok(std::iter::empty())
     }
 }
 
 impl<'a> NewEntity<'a> {
-    pub fn modify_component<C: Component + Default>(&self, f: impl FnOnce(&mut C)) -> Entity<'a> {
+    pub fn modify_component<C: Component + Default>(self, f: impl FnOnce(&mut C)) -> Entity<'a> {
         self.try_modify_component(|c| {
             f(c);
             Ok(())
@@ -423,7 +425,7 @@ impl<'a> NewEntity<'a> {
     // TODO: Race Condition; needs refactoring to make Entity generic over
     // `rusqlite::Connection` and `rusqlite::Transaction`
     pub fn try_modify_component<C: Component + Default>(
-        &self,
+        self,
         f: impl FnOnce(&mut C) -> Result<(), anyhow::Error>,
     ) -> Result<Entity<'a>, ModifyComponentError> {
         let mut component = C::default();
