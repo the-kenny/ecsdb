@@ -27,6 +27,11 @@ pub mod component {
         fn component_name() -> &'static str {
             Self::NAME
         }
+
+        const OTHER_NAMES: &'static [&'static str] = &[];
+        fn other_component_names() -> &'static [&'static str] {
+            Self::OTHER_NAMES
+        }
     }
 
     pub type StorageError = ();
@@ -111,6 +116,14 @@ fn test_resource_standalone() {
     assert_eq!(Foo::component_name(), "derive_test::Foo".to_string());
 }
 
+#[test]
+fn test_other_names() {
+    #[derive(Component)]
+    #[component(other_names = ["derive_test::OldFoo"])]
+    struct Foo;
+
+    assert_eq!(Foo::component_name(), "derive_test::Foo".to_string());
+}
 
 // #[test]
 // fn derive_bundle_struct() {

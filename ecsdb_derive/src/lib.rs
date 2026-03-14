@@ -1,8 +1,10 @@
 extern crate proc_macro;
 
+use std::collections::HashSet;
+
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{Attribute, Data, Expr, Fields, Lit, Meta, Token, punctuated::Punctuated};
+use syn::{Attribute, Data, Expr, ExprLit, Fields, Lit, Meta, Token, punctuated::Punctuated};
 
 #[proc_macro_derive(Component, attributes(component))]
 pub fn derive_component_fn(input: TokenStream) -> TokenStream {
@@ -53,6 +55,7 @@ enum Name {
 struct Attributes {
     storage: Storage,
     name: Name,
+    other_names: HashSet<String>,
 }
 
 fn impl_derive_component(ast: &syn::DeriveInput) -> TokenStream {
@@ -71,6 +74,13 @@ fn impl_derive_component(ast: &syn::DeriveInput) -> TokenStream {
         Name::Custom(name) => quote!(#name),
     };
 
+    let other_component_names = attributes
+        .other_names
+        .into_iter()
+        .map(|name| quote!(#name))
+        .collect::<Vec<_>>();
+    let other_component_names = quote!(&[#(#other_component_names),*]);
+
     let storage = match attributes.storage {
         Storage::Json => quote!(ecsdb::component::JsonStorage),
         Storage::Blob => quote!(ecsdb::component::BlobStorage),
@@ -81,6 +91,7 @@ fn impl_derive_component(ast: &syn::DeriveInput) -> TokenStream {
         impl ecsdb::component::Component for #name {
             type Storage = #storage;
             const NAME: &'static str = #component_name;
+            const OTHER_NAMES: &'static [&'static str] = #other_component_names;
         }
     }
     .into()
@@ -182,6 +193,22 @@ fn extract_attributes(attrs: &[Attribute]) -> Attributes {
                         let custom_name = lit.value();
                         attributes.name = Name::Custom(custom_name);
                     }
+                }
+                Meta::NameValue(mnv) if mnv.path.is_ident("other_names") => {
+                    let Expr::Array(array_expr) = &mnv.value else {
+                        panic!("other_names must be an array of string-literals");
+                    };
+
+                    attributes.other_names = array_expr
+                        .elems
+                        .iter()
+                        .filter_map(|e| match e {
+                            Expr::Lit(ExprLit {
+                                lit: Lit::Str(lit), ..
+                            }) => Some(lit.value()),
+                            _ => None,
+                        })
+                        .collect();
                 }
                 other => panic!(
                     "Unsupported attribute {}",

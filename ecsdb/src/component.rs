@@ -11,6 +11,11 @@ pub trait Component: Sized + Any + ComponentRead<Self> + ComponentWrite<Self> {
     fn component_name() -> &'static str {
         Self::NAME
     }
+
+    const OTHER_NAMES: &'static [&'static str] = &[];
+    fn other_component_names() -> &'static [&'static str] {
+        Self::OTHER_NAMES
+    }
 }
 
 pub trait ComponentWrite<C> {
