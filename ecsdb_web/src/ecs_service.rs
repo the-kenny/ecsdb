@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fmt::Debug, marker::PhantomData};
+use std::{collections::HashSet, fmt::Debug, marker::PhantomData, str::FromStr};
 
 use bytes::Bytes;
 use ecsdb::EntityId;
@@ -61,8 +61,9 @@ where
                 .body(ResponseBody::from(markup.into_string()))
         }
         Response::Redirect(path) => {
-            // Prepent base url to our redirect target
-            let mut base = iri::PathBuf::new(base_url.path().to_owned()).unwrap();
+            // Prepend base url to our redirect target
+            let base_url_without_trailing_slash = base_url.path().trim_end_matches('/');
+            let mut base = iri::PathBuf::new(base_url_without_trailing_slash.to_owned()).unwrap();
             base.symbolic_append(path.segments());
 
             http::Response::builder()
@@ -163,6 +164,7 @@ fn zero_entity_id() -> EntityId {
 }
 
 pub enum Request {
+    Index,
     Entities {
         filter: Filter,
     },
@@ -211,6 +213,7 @@ impl Request {
         debug!(?path_components);
 
         match (req.method(), path_components.iter().as_slice()) {
+            (&Method::GET, &[] | &[""]) => Ok(Self::Index),
             (&Method::GET, &["entities"]) => {
                 let query = url.query().unwrap_or_default();
                 let filter: Filter =
@@ -288,6 +291,9 @@ impl Request {
     #[instrument(level = "debug", skip(db), ret)]
     async fn handle(&self, db: ecsdb::Ecs) -> Result<Response, Error> {
         match *self {
+            Self::Index => Ok(Response::Redirect(
+                iri::PathBuf::from_str("entities").unwrap(),
+            )),
             Request::Entities { ref filter } => {
                 let mut entities = db
                     .query::<ecsdb::Entity, ()>()
@@ -427,6 +433,7 @@ impl std::fmt::Debug for Response {
 impl std::fmt::Debug for Request {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Index => f.debug_tuple("Index").finish(),
             Self::Entities { filter } => f.debug_tuple("Entities").field(&filter).finish(),
             Self::Entity(eid) => f.debug_tuple("Entity").field(eid).finish(),
             Self::Component {
