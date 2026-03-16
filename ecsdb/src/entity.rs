@@ -180,6 +180,37 @@ impl<'a> Entity<'a> {
             .next()
             .transpose()
     }
+
+    pub fn dyn_attach(&self, component: DynComponent<'a>) -> Self {
+        self.try_dyn_attach(component)
+            .expect("Entity::try_dyn_attach")
+    }
+
+    pub fn try_dyn_attach(&self, component: DynComponent<'a>) -> Result<Self, Error> {
+        let mut query = self.0.conn.prepare_cached(
+            "update components set data = ?1 where entity = ?2 and component = ?3",
+        )?;
+
+        query.execute(params![component.1, self.id(), component.0])?;
+        Ok(*self)
+    }
+}
+
+impl<'a> Entity<'a> {
+    pub fn detach_named(&self, component: &str) -> Self {
+        self.try_detach_named(component)
+            .expect("Entity::try_detach_named")
+    }
+
+    pub fn try_detach_named(&self, component: &str) -> Result<Self, Error> {
+        let mut query = self
+            .0
+            .conn
+            .prepare_cached("delete from components where entity = ?1 and component = ?2")?;
+
+        query.execute(params![self.id(), component])?;
+        Ok(*self)
+    }
 }
 
 impl<'a> Entity<'a> {
