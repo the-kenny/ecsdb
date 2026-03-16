@@ -291,7 +291,7 @@ mod pages {
                                 td {
                                     (format_time(entity.last_modified()))
                                 }
-                                td {
+                                td title=(entity.component_names().collect::<Vec<_>>().join(", ")) {
                                     (entity.component_names().count()) " Components"
                                 }
                                 td style="text-align: center" {
