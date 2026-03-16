@@ -251,8 +251,7 @@ mod pages {
         all_component_names.sort();
 
         html!({
-            form action="entities" hx-get="entities" hx-trigger="change,submit" hx-target="this" hx-swap="outerHTML" hx-push-url="true" {
-
+            form action="entities" hx-get="entities" hx-trigger="change,submit" hx-target="main" hx-swap="innerHTML" hx-push-url="true" {
                 div class="flex-row" {
                     div {
                         label for="component_input" { "Component" }
@@ -281,71 +280,76 @@ mod pages {
                         button type="submit" name="after" value="0" { "Apply "}
                     }
                 }
+            }
 
-                style {r#"
-                    #entity-table th, #entity-table td {
-                        text-wrap: nowrap;
+            style {r#"
+                #entity-table th, #entity-table td {
+                    text-wrap: nowrap;
+                }
+            "#}
+
+            table id="entity-table" {
+                thead {
+                    tr {
+                        th { "EntityId" }
+                        @for component_name in &filter.component_names {
+                            th { (component_name) }
+                        }
+                        th { "Created" }
+                        th { "Updated" }
+                        th { "Components" }
+                        th { "" }
                     }
-                "#}
+                }
+                tbody {
+                    @let popover_id = "entity_details_popover";
 
-                table id="entity-table" {
-                    thead {
+                    @for entity in entities {
                         tr {
-                            th { "EntityId" }
+                            td {
+                                a href=(format!("entities/{}", entity.id())) {
+                                    pre { (entity.id()) }
+                                }
+                            }
                             @for component_name in &filter.component_names {
-                                th { (component_name) }
+                                td style="overflow-x: scroll; max-width: 300px;" {
+                                    @let component = entity.dyn_component(component_name);
+                                    (component_inline_view(component))
+                                }
                             }
-                            th { "Created" }
-                            th { "Updated" }
-                            th { "Components" }
-                            th { "View" }
-                        }
-                    }
-                    tbody {
-                        @for entity in entities {
-                            @let popover_id = format!("entity-{}", entity.id());
-                            tr {
-                                td {
-                                    a href=(format!("entities/{}", entity.id())) {
-                                        pre { (entity.id()) }
-                                    }
+                            td {
+                                (format_time(entity.created_at()))
+                            }
+                            td {
+                                (format_time(entity.last_modified()))
+                            }
+                            td title=(entity.component_names().collect::<Vec<_>>().join(", ")) {
+                                (entity.component_names().count()) " Components"
+                            }
+                            td style="text-align: center" {
+                                a class="<button>"
+                                    hx-get=(format!("entities/{}", entity.id()))
+                                    hx-target=(format!("#{popover_id} > .content"))
+                                    hx-swap="innerHTML"
+                                    hx-on::after-request=(format!("htmx.find('#{popover_id}').togglePopover()"))
+                                {
+                                    "View"
                                 }
-                                @for component_name in &filter.component_names {
-                                    td style="overflow-x: scroll; max-width: 300px;" {
-                                        @let component = entity.dyn_component(component_name);
-                                        (component_inline_view(component))
-                                    }
-                                }
-                                td {
-                                    (format_time(entity.created_at()))
-                                }
-                                td {
-                                    (format_time(entity.last_modified()))
-                                }
-                                td title=(entity.component_names().collect::<Vec<_>>().join(", ")) {
-                                    (entity.component_names().count()) " Components"
-                                }
-                                td style="text-align: center" {
-                                    a class="<button>" hx-on:click=(format!("htmx.find('#{popover_id}').togglePopover()")) {
-                                        "View"
-                                    }
-                                    dialog id=(popover_id) popover="auto" {
-                                        div class="titlebar flex-row justify-content:space-between align-items:center" {
-                                            span { "Entity " (entity.id()) }
-                                            button type="button" popovertarget=(popover_id) popovertargetaction="hide" {
-                                                "Close"
-                                            }
-                                        }
-                                        div hx-get=(format!("entities/{}", entity.id()))
-                                            hx-trigger=(format!("toggle from:#{popover_id}"))
-                                            hx-swap="innerHTML" {
-                                            "Loading..."
-                                        }
-                                    }
-                                }
+
                             }
                         }
                     }
+                }
+            }
+
+            dialog id=(popover_id) popover="auto" {
+                div class="titlebar flex-row justify-content:space-between align-items:center" {
+                    button type="button" popovertarget=(popover_id) popovertargetaction="hide" {
+                        "Close"
+                    }
+                }
+                div.content {
+                    "Loading..."
                 }
             }
         })
