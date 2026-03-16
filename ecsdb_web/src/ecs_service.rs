@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use futures_util::TryStreamExt;
 use http::Method;
-use tracing::{debug, instrument};
+use tracing::{debug, info, instrument};
 use url::form_urlencoded;
 
 use crate::{LastAccess, pages};
@@ -102,6 +102,9 @@ pub enum Error {
     #[error("Invalid EntityId {0:?}")]
     InvalidEntityId(String),
 
+    #[error("Invalid component name '{0}'")]
+    InvalidComponentName(String),
+
     #[error(transparent)]
     Ecs(#[from] ecsdb::Error),
 
@@ -117,6 +120,7 @@ impl Error {
         let status = match &self {
             Error::InvalidRequest(_, _) => StatusCode::BAD_REQUEST,
             Error::InvalidEntityId(_) => StatusCode::BAD_REQUEST,
+            Error::InvalidComponentName(_) => StatusCode::BAD_REQUEST,
             Error::Ecs(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Error::InvalidComponentData(_) => StatusCode::BAD_REQUEST,
             Error::Other(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -177,6 +181,10 @@ pub enum Request {
         entity_id: EntityId,
         component: String,
         value: serde_json::Value,
+    },
+    DeleteComponent {
+        entity_id: EntityId,
+        component: String,
     },
     DownloadComponent {
         entity_id: EntityId,
@@ -284,6 +292,23 @@ impl Request {
                 }
             }
 
+            (&Method::DELETE, &["entities", entity_id, "components", component]) => {
+                let Ok(entity_id) = str::parse::<EntityId>(entity_id) else {
+                    return Err(Error::InvalidEntityId(entity_id.into()));
+                };
+
+                if component.trim().is_empty() {
+                    return Err(Error::InvalidComponentName(component.into()));
+                }
+
+                let component = component.to_string();
+
+                Ok(Self::DeleteComponent {
+                    entity_id,
+                    component,
+                })
+            }
+
             (method, path) => Err(Error::InvalidRequest(method.to_owned(), path.join("/"))),
         }
     }
@@ -360,6 +385,21 @@ impl Request {
 
                 entity.attach(LastAccess::now()).dyn_attach(component);
 
+                Ok(Response::Redirect(target))
+            }
+            Self::DeleteComponent {
+                entity_id,
+                component,
+            } => {
+                let Some(entity) = db.find(*entity_id).next() else {
+                    return Ok(Response::NotFound);
+                };
+
+                entity.detach_named(component).attach(LastAccess::now());
+
+                info!(component, entity_id, "detached");
+
+                let target = iri::PathBuf::new(format!("entities/{entity_id}")).unwrap();
                 Ok(Response::Redirect(target))
             }
             Self::DownloadComponent {
@@ -453,6 +493,14 @@ impl std::fmt::Debug for Request {
                 .field(entity_id)
                 .field(&format_args!("{component}"))
                 .field(&format_args!("<redacted>"))
+                .finish(),
+            Self::DeleteComponent {
+                entity_id,
+                component,
+            } => f
+                .debug_tuple("DeleteComponent")
+                .field(entity_id)
+                .field(&format_args!("{component}"))
                 .finish(),
             Self::DownloadComponent {
                 entity_id: entity,
