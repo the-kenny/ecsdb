@@ -252,28 +252,33 @@ mod pages {
 
         html!({
             form action="entities" hx-get="entities" hx-trigger="change,submit" hx-target="this" hx-swap="outerHTML" hx-push-url="true" {
-                button type="submit" name="after" value="0" { "Apply "}
 
-                label {
-                    "Component"
-                    select name="component_names" {
-                        option value="" selected[filter.component_names.is_empty()] { "-" }
-                        @for component_name in all_component_names {
-                            @let selected = filter.component_names.contains(component_name);
-                            option value=(component_name) selected[selected] { (component_name) }
+                div class="flex-row" {
+                    div {
+                        label for="component_input" { "Component" }
+                        select id="component_input" name="component_names" {
+                            option value="" selected[filter.component_names.is_empty()] { "-" }
+                            @for component_name in all_component_names {
+                                @let selected = filter.component_names.contains(component_name);
+                                option value=(component_name) selected[selected] { (component_name) }
+                            }
                         }
                     }
-                }
 
-                label {
-                    "Show"
-                    select name="count" {
-                        @for n in [20, 50, 100] {
-                            @let selected = filter.count == n;
-                            option value=(n) selected[selected] { (n) }
+                    div{
+                        label for="count_input" { "Show" }
+                        select id="count_input" name="count" {
+                            @for n in [20, 50, 100] {
+                                @let selected = filter.count == n;
+                                option value=(n) selected[selected] { (n) }
+                            }
+                            @let selected = filter.count == 999999;
+                            option value="999999" selected[selected] { "All" }
                         }
-                        @let selected = filter.count == 999999;
-                        option value="999999" selected[selected] { "All" }
+                    }
+
+                    div class="align-self:end" {
+                        button type="submit" name="after" value="0" { "Apply "}
                     }
                 }
 
@@ -454,7 +459,7 @@ mod pages {
                     base href=(base_url) { }
                 }
                 body {
-                    header {
+                    header class="navbar" {
                         nav.breadcrumbs aria-label="Breadcrumbs" {
                             ul role="list" {
                                 @for (n, breadcrumb) in (breadcrumbs.iter().enumerate()) {
