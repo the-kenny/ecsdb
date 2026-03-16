@@ -179,7 +179,7 @@ pub enum Request {
         value: serde_json::Value,
     },
     DownloadComponent {
-        entity: EntityId,
+        entity_id: EntityId,
         component: String,
     },
 }
@@ -241,12 +241,12 @@ impl Request {
             }
 
             (&Method::GET, &["entities", entity_id, "components", component, "download"]) => {
-                let Ok(entity) = str::parse::<EntityId>(entity_id) else {
+                let Ok(entity_id) = str::parse::<EntityId>(entity_id) else {
                     return Err(Error::InvalidEntityId(entity_id.into()));
                 };
 
                 Ok(Self::DownloadComponent {
-                    entity,
+                    entity_id,
                     component: component.to_owned(),
                 })
             }
@@ -290,11 +290,11 @@ impl Request {
 
     #[instrument(level = "debug", skip(db), ret)]
     async fn handle(&self, db: ecsdb::Ecs) -> Result<Response, Error> {
-        match *self {
+        match self {
             Self::Index => Ok(Response::Redirect(
                 iri::PathBuf::from_str("entities").unwrap(),
             )),
-            Request::Entities { ref filter } => {
+            Self::Entities { filter } => {
                 let mut entities = db
                     .query::<ecsdb::Entity, ()>()
                     .filter(|e| e.id() > filter.after)
@@ -321,31 +321,31 @@ impl Request {
                     &all_component_names,
                 )))
             }
-            Request::Entity(eid) => {
-                let Some(entity) = db.find(eid).next() else {
+            Self::Entity(eid) => {
+                let Some(entity) = db.find(*eid).next() else {
                     return Ok(Response::NotFound);
                 };
 
                 entity.attach(LastAccess::now());
                 Ok(Response::Markup(pages::entity(entity)))
             }
-            Request::Component {
-                entity_id: entity,
-                ref component,
+            Self::Component {
+                entity_id,
+                component,
             } => {
-                let Some(entity) = db.find(entity).next() else {
+                let Some(entity) = db.find(*entity_id).next() else {
                     return Ok(Response::NotFound);
                 };
 
                 entity.attach(LastAccess::now());
                 Ok(Response::Markup(pages::component_editor(entity, component)))
             }
-            Request::ModifyComponent {
+            Self::ModifyComponent {
                 entity_id,
-                ref component,
-                ref value,
+                component,
+                value,
             } => {
-                let Some(entity) = db.find(entity_id).next() else {
+                let Some(entity) = db.find(*entity_id).next() else {
                     return Ok(Response::NotFound);
                 };
 
@@ -363,10 +363,10 @@ impl Request {
                 Ok(Response::Redirect(target))
             }
             Self::DownloadComponent {
-                entity,
-                ref component,
+                entity_id,
+                component,
             } => {
-                let Some(entity) = db.find(entity).next() else {
+                let Some(entity) = db.find(*entity_id).next() else {
                     return Ok(Response::Markup(pages::not_found()));
                 };
 
@@ -454,7 +454,10 @@ impl std::fmt::Debug for Request {
                 .field(&format_args!("{component}"))
                 .field(&format_args!("<redacted>"))
                 .finish(),
-            Self::DownloadComponent { entity, component } => f
+            Self::DownloadComponent {
+                entity_id: entity,
+                component,
+            } => f
                 .debug_tuple("Download")
                 .field(entity)
                 .field(component)
