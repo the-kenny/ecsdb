@@ -57,7 +57,7 @@ where
 
             http::Response::builder()
                 .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, "text/html")
+                .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
                 .body(ResponseBody::from(markup.into_string()))
         }
         Response::Redirect(path) => {
