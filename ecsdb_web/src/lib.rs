@@ -151,6 +151,7 @@ impl Breadcrumb {
                 add(&mut breadcrumbs, component, &["components", component]);
             }
             Request::ModifyComponent { .. } => unreachable!(),
+            Request::DeleteComponent { .. } => unreachable!(),
             Request::DownloadComponent { .. } => unreachable!(),
         };
 
@@ -171,14 +172,16 @@ mod pages {
                         th { "Component" }
                         th { "Type" }
                         th { "Data" }
+                        th {}
                     }
                 }
                 tbody {
                     @for name in entity.component_names() {
                         @let component = entity.dyn_component(&name).unwrap();
+                        @let url = format!("entities/{}/components/{}", entity.id(), name);
                         tr {
                             td {
-                                a href=(format!("entities/{}/components/{}", entity.id(), name)) {
+                                a href=(url) {
                                     pre { (name) }
                                 }
                             }
@@ -190,6 +193,14 @@ mod pages {
                             td {
                                 pre {
                                     (component.as_json().map(|j| j.to_string()).unwrap_or_else(|| "<unrenderable>".to_string()))
+                                }
+                            }
+                            td {
+                                form {
+                                    @let confirm = format!("Delete '{name}' from entity {}?", entity.id());
+                                    button hx-delete=(url) hx-confirm=(confirm) hx-target="closest table" {
+                                        "␡"
+                                    }
                                 }
                             }
                         }
