@@ -248,8 +248,11 @@ mod pages {
             .map(AsRef::as_ref)
             .collect::<Vec<_>>();
         all_component_names.sort();
+
         html!({
-            form {
+            form action="entities" hx-get="entities" hx-trigger="change,submit" hx-target="this" hx-swap="outerHTML" hx-push-url="true" {
+                button type="submit" name="after" value="0" { "Apply "}
+
                 label {
                     "Component"
                     select name="component_names" {
@@ -261,10 +264,17 @@ mod pages {
                     }
                 }
 
-                // input type="hidden" name="after" value=(filter.after) { }
-                input type="hidden" name="count" value=(filter.count) { }
-
-                button type="submit" name="after" value="0" { "Apply "}
+                label {
+                    "Show"
+                    select name="count" {
+                        @for n in [20, 50, 100] {
+                            @let selected = filter.count == n;
+                            option value=(n) selected[selected] { (n) }
+                        }
+                        @let selected = filter.count == 999999;
+                        option value="999999" selected[selected] { "All" }
+                    }
+                }
 
                 table id="entity-table" {
                     thead {
@@ -315,26 +325,8 @@ mod pages {
                             }
                         }
                     }
-                    tfoot {
-                        tr {
-                            td colspan="999" {
-                                nav id="table-navigation" hx-swap-oob="true" {
-                                    button type="submit"
-                                           name="after"
-                                           value=(filter.after)
-                                           hx-target="#entity-table>tbody"
-                                           hx-get="entities"v
-                                           hx-swap="beforeend"
-                                           hx-select="#entity-table>tbody>tr" {
-                                        "Next"
-                                    }
-                                }
-                            }
-                        }
-                    }
                 }
             }
-
         })
     }
 

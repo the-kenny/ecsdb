@@ -333,16 +333,11 @@ impl Request {
                     .collect::<Vec<_>>();
                 entities.sort_by_key(|e| e.id());
 
-                let next_page = Filter {
-                    after: entities.last().map(ecsdb::Entity::id).unwrap_or_default(),
-                    ..filter.clone()
-                };
-
                 let all_component_names = db.component_names()?;
 
                 Ok(Response::Markup(pages::entities(
                     &entities,
-                    &next_page,
+                    filter,
                     &all_component_names,
                 )))
             }
