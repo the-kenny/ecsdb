@@ -160,6 +160,7 @@ impl Breadcrumb {
 }
 
 mod pages {
+    use ecsdb::DynComponent;
     use maud::{Markup, html};
     use std::fmt::Display;
 
@@ -276,10 +277,19 @@ mod pages {
                     }
                 }
 
+                style {r#"
+                    #entity-table th, #entity-table td {
+                        text-wrap: nowrap;
+                    }
+                "#}
+
                 table id="entity-table" {
                     thead {
                         tr {
                             th { "EntityId" }
+                            @for component_name in &filter.component_names {
+                                th { (component_name) }
+                            }
                             th { "Created" }
                             th { "Updated" }
                             th { "Components" }
@@ -293,6 +303,12 @@ mod pages {
                                 td {
                                     a href=(format!("entities/{}", entity.id())) {
                                         pre { (entity.id()) }
+                                    }
+                                }
+                                @for component_name in &filter.component_names {
+                                    td style="overflow-x: scroll; max-width: 300px;" {
+                                        @let component = entity.dyn_component(component_name);
+                                        (component_inline_view(component))
                                     }
                                 }
                                 td {
@@ -386,6 +402,37 @@ mod pages {
             form method="post" {
                 (content_editor)
             }
+        }
+    }
+
+    pub fn component_inline_view(component: Option<DynComponent>) -> maud::Markup {
+        let Some(component) = component else {
+            return html!(pre { "<missing>" });
+        };
+
+        match component.kind() {
+            ecsdb::dyn_component::Kind::Json => {
+                let Some(component_json) = component.as_json() else {
+                    panic!()
+                };
+
+                let json = serde_json::to_string(&component_json).expect("component -> json");
+
+                html! {
+                    pre { (json) }
+                }
+            }
+            ecsdb::dyn_component::Kind::Blob => {
+                html!(pre { "<blob>" })
+            }
+            ecsdb::dyn_component::Kind::Null => {
+                html! {
+                    pre { "<null>" }
+                }
+            }
+            ecsdb::dyn_component::Kind::Other(t) => html! {
+                p { (format!("Unsupported ({t:?})"))}
+            },
         }
     }
 
