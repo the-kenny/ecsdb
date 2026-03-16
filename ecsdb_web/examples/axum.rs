@@ -25,6 +25,7 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let service = tower::ServiceBuilder::new().service(service);
 
     let app = Router::new()
+        .route("/", get(axum::response::Redirect::to("/ecsdb/entities")))
         .route("/test", get("test route"))
         .nest_service("/ecsdb", service);
 

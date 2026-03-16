@@ -136,6 +136,7 @@ impl Breadcrumb {
         }
 
         match request {
+            Request::Index => (),
             Request::Entities { .. } => (),
             Request::Entity(eid) => {
                 let eid = eid.to_string();
