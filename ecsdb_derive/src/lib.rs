@@ -10,10 +10,22 @@ pub fn derive_component_fn(input: TokenStream) -> TokenStream {
     impl_derive_component(&ast)
 }
 
+/// Deprecated alias for `#[derive(Component)]`. Do not combine with `Component`.
 #[proc_macro_derive(Resource, attributes(component))]
 pub fn derive_resource_fn(input: TokenStream) -> TokenStream {
-    let ast = syn::parse(input).unwrap();
-    impl_derive_resource(&ast)
+    let ast: syn::DeriveInput = syn::parse(input).unwrap();
+    let name = &ast.ident;
+    let marker = format_ident!("_ecsdb_Resource_deprecated_for_{}", name);
+    let component_impl: proc_macro2::TokenStream = impl_derive_component(&ast).into();
+    quote! {
+        #component_impl
+
+        #[allow(non_camel_case_types)]
+        #[deprecated(note = "use `#[derive(Component)]` instead of `#[derive(Resource)]`")]
+        struct #marker;
+        const _: #marker = #marker;
+    }
+    .into()
 }
 
 #[proc_macro_derive(Bundle)]
@@ -70,19 +82,6 @@ fn impl_derive_component(ast: &syn::DeriveInput) -> TokenStream {
             type Storage = #storage;
             const NAME: &'static str = #component_name;
         }
-    }
-    .into()
-}
-
-fn impl_derive_resource(ast: &syn::DeriveInput) -> TokenStream {
-    let name = ast.ident.clone();
-
-    let component_derive: proc_macro2::TokenStream = impl_derive_component(ast).into();
-
-    quote! {
-        #component_derive
-
-        impl ecsdb::resource::Resource for #name { }
     }
     .into()
 }

@@ -2,7 +2,7 @@ use std::any::Any;
 
 use serde::{Serialize, de::DeserializeOwned};
 
-pub use ecsdb_derive::{Bundle, Component};
+pub use ecsdb_derive::{Bundle, Component, Resource};
 
 pub trait Component: Sized + Any + ComponentRead<Self> + ComponentWrite<Self> {
     type Storage;

@@ -1,96 +1,57 @@
 use std::ops::{Deref, DerefMut};
 
-pub use ecsdb_derive::Resource;
-
-use rusqlite::params;
-use tracing::debug;
-
 use crate::{Component, Ecs, Error};
 
-pub trait Resource: Component {
-    fn resource_name() -> &'static str {
-        <Self as Component>::component_name()
-    }
-}
-
 impl Ecs {
-    pub fn resource<R: Resource>(&self) -> Option<R> {
+    pub fn resource<R: Component>(&self) -> Option<R> {
         self.try_resource::<R>().unwrap()
     }
 
-    pub fn try_resource<R: Resource>(&self) -> Result<Option<R>, Error> {
-        let name = R::resource_name();
-        let mut query = self
-            .conn
-            .prepare_cached("select data from resources where name = ?1")?;
-        query
-            .query_and_then(params![name], |row| {
-                let data = row.get_ref("data")?;
-                Ok(R::from_rusqlite(&rusqlite::types::ToSqlOutput::Borrowed(
-                    data,
-                ))?)
-            })?
-            .next()
-            .transpose()
+    pub fn try_resource<R: Component>(&self) -> Result<Option<R>, Error> {
+        self.world_entity().try_component::<R>()
     }
 
-    pub fn resource_mut<'a, R: Resource + Default>(&'a mut self) -> impl DerefMut<Target = R> + 'a {
+    pub fn resource_mut<'a, R: Component + Default>(
+        &'a mut self,
+    ) -> impl DerefMut<Target = R> + 'a {
         self.try_resource_mut().unwrap()
     }
 
-    pub fn try_resource_mut<'a, R: Resource + Default>(
+    pub fn try_resource_mut<'a, R: Component + Default>(
         &'a mut self,
     ) -> Result<impl DerefMut<Target = R> + 'a, Error> {
         let resource = self.try_resource()?.unwrap_or_default();
         Ok(ResourceProxy(self, resource))
     }
 
-    pub fn attach_resource<R: Resource>(&self, resource: R) {
+    pub fn attach_resource<R: Component>(&self, resource: R) {
         self.try_attach_resource(resource).unwrap()
     }
 
-    pub fn try_attach_resource<R: Resource>(&self, resource: R) -> Result<(), Error> {
-        let name = R::component_name();
-        let data = R::to_rusqlite(&resource)?;
-
-        self.conn.execute(
-            "
-            insert into resources (name, data) values (?1, ?2)
-            on conflict (name) do update set data = excluded.data
-            ",
-            params![name, data],
-        )?;
-
-        debug!(resource = name, "inserted");
-
+    pub fn try_attach_resource<R: Component>(&self, resource: R) -> Result<(), Error> {
+        self.world_entity().try_attach(resource)?;
         Ok(())
     }
 
-    pub fn detach_resource<R: Resource>(&self) {
+    pub fn detach_resource<R: Component>(&self) {
         self.try_detach_resource::<R>().unwrap()
     }
 
-    pub fn try_detach_resource<R: Resource>(&self) -> Result<(), Error> {
-        let name = R::component_name();
-
-        self.conn
-            .execute("delete from resources where name = ?1", params![name])?;
-
-        debug!(resource = name, "deleted");
-
+    pub fn try_detach_resource<R: Component>(&self) -> Result<(), Error> {
+        self.world_entity().try_detach::<R>()?;
         Ok(())
     }
 }
 
-pub struct ResourceProxy<'a, R: Resource + Default>(&'a mut Ecs, R);
+pub struct ResourceProxy<'a, R: Component + Default>(&'a mut Ecs, R);
 
-impl<'a, R: Resource + Default> AsMut<R> for ResourceProxy<'a, R> {
+impl<'a, R: Component + Default> AsMut<R> for ResourceProxy<'a, R> {
     fn as_mut(&mut self) -> &mut R {
         &mut self.1
     }
 }
 
-impl<'a, R: Resource + Default> Deref for ResourceProxy<'a, R> {
+impl<'a, R: Component + Default> Deref for ResourceProxy<'a, R> {
     type Target = R;
 
     fn deref(&self) -> &Self::Target {
@@ -98,13 +59,13 @@ impl<'a, R: Resource + Default> Deref for ResourceProxy<'a, R> {
     }
 }
 
-impl<'a, R: Resource + Default> DerefMut for ResourceProxy<'a, R> {
+impl<'a, R: Component + Default> DerefMut for ResourceProxy<'a, R> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.1
     }
 }
 
-impl<'a, R: Resource + Default> Drop for ResourceProxy<'a, R> {
+impl<'a, R: Component + Default> Drop for ResourceProxy<'a, R> {
     fn drop(&mut self) {
         let resource = std::mem::take(&mut self.1);
         self.0.attach_resource(resource);
@@ -116,9 +77,9 @@ mod tests {
     use serde::{Deserialize, Serialize};
 
     use crate::{self as ecsdb};
-    use crate::{Ecs, Resource}; // #[derive(Component)] derives `impl ecsdb::Component for ...`
+    use crate::{Component, Ecs};
 
-    #[derive(Debug, Serialize, Deserialize, Resource, PartialEq, Default)]
+    #[derive(Debug, Serialize, Deserialize, Component, PartialEq, Default)]
     struct TestResource(pub i32);
 
     #[test]

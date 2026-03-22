@@ -136,20 +136,3 @@ having
     count(*) filter (
         where component not in (select component from system_components)
     ) = 0;
-
--- Resources
-create table if not exists resources (
-    name text not null unique,
-    data blob,
-    last_modified rfc3339 not null default (strftime ('%Y-%m-%dT%H:%M:%fZ'))
-);
-
-create trigger if not exists resources_last_modified_trigger before
-update on resources for each row
-begin
-    update resources
-    set
-        last_modified = strftime ('%Y-%m-%dT%H:%M:%fZ')
-    where
-        name = new.name;
-end;

@@ -1,7 +1,7 @@
 pub mod component;
 
 pub use component::Bundle;
-pub use component::{Component, ComponentRead, ComponentWrite};
+pub use component::{Component, ComponentRead, ComponentWrite, Resource};
 
 pub mod dyn_component;
 pub use dyn_component::DynComponent;
@@ -17,7 +17,7 @@ pub mod hierarchy;
 pub mod query;
 
 pub mod resource;
-pub use resource::*;
+pub use resource::ResourceProxy;
 
 pub mod schedule;
 pub use schedule::Schedule;
@@ -44,6 +44,9 @@ use tracing::{debug, instrument};
 use crate::query::QueryFilterValue;
 
 pub type EntityId = i64;
+
+/// Reserved entity ID for storing resources (world-level singletons).
+pub const WORLD_ENTITY: EntityId = 0;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -76,6 +79,15 @@ impl Ecs {
 
     pub fn from_rusqlite(mut conn: rusqlite::Connection) -> Result<Self, Error> {
         conn.pragma_update(None, "journal_mode", "wal")?;
+
+        // Migrate resources table to components on the world entity
+        let has_resources: bool = conn
+            .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='resources'")?
+            .exists([])?;
+        if has_resources {
+            conn.execute_batch(include_str!("migrations/03_resources_to_components.sql"))?;
+        }
+
         conn.execute_batch(include_str!("schema.sql"))?;
         conn.set_transaction_behavior(::rusqlite::TransactionBehavior::Immediate);
 
@@ -119,6 +131,11 @@ impl Ecs {
 
     pub fn entity<'a>(&'a self, eid: EntityId) -> Entity<'a> {
         Entity::with_id(self, eid)
+    }
+
+    /// Returns the world entity (ID 0), which stores resources.
+    pub fn world_entity(&self) -> Entity<'_> {
+        Entity::with_id(self, WORLD_ENTITY)
     }
 }
 

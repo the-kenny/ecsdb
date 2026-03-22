@@ -47,14 +47,6 @@ pub mod component {
     pub trait ComponentWrite {}
 }
 
-pub mod resource {
-    pub trait Resource: super::component::Component {
-        fn resource_name() -> &'static str {
-            <Self as super::component::Component>::component_name()
-        }
-    }
-}
-
 pub mod rusqlite {
     pub mod types {
         use std::marker::PhantomData;
@@ -65,7 +57,6 @@ pub mod rusqlite {
 // Necessary for development as we derive `ecsdb::Component for ...`
 use crate as ecsdb;
 use ecsdb::component::Component;
-use ecsdb::resource::Resource;
 use ecsdb_derive::{Component, Resource};
 
 #[allow(unused)]
@@ -109,21 +100,17 @@ fn derive_name_attribute() {
     struct X;
 
     assert_eq!(X::component_name(), "foo::Bar");
-
-    #[derive(Resource)]
-    #[component(name = "foo::Bar")]
-    struct Y;
-
-    assert_eq!(Y::component_name(), "foo::Bar");
 }
 
 #[test]
-fn test_resource() {
+fn test_resource_standalone() {
+    // Resource without Component derives Component
     #[derive(Resource)]
     struct Foo;
 
-    assert_eq!(Foo::resource_name(), "derive_test::Foo".to_string());
+    assert_eq!(Foo::component_name(), "derive_test::Foo".to_string());
 }
+
 
 // #[test]
 // fn derive_bundle_struct() {
