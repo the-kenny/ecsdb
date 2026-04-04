@@ -142,8 +142,8 @@ pub(crate) struct Filter {
     )]
     pub component_names: HashSet<String>,
 
-    #[serde(default = "zero_entity_id")]
-    pub after: EntityId,
+    #[serde(default)]
+    pub after: Option<EntityId>,
 
     #[serde(default = "default_per_page")]
     pub count: usize,
@@ -153,7 +153,7 @@ impl Default for Filter {
     fn default() -> Self {
         Self {
             component_names: Default::default(),
-            after: zero_entity_id(),
+            after: Default::default(),
             count: default_per_page(),
         }
     }
@@ -161,10 +161,6 @@ impl Default for Filter {
 
 fn default_per_page() -> usize {
     20
-}
-
-fn zero_entity_id() -> EntityId {
-    0
 }
 
 pub enum Request {
@@ -322,7 +318,7 @@ impl Request {
             Self::Entities { filter } => {
                 let mut entities = db
                     .query::<ecsdb::Entity, ()>()
-                    .filter(|e| e.id() > filter.after)
+                    .filter(|e| filter.after.map(|after| e.id() > after).unwrap_or(true))
                     .filter(|e| {
                         filter.component_names.is_empty()
                             || filter
