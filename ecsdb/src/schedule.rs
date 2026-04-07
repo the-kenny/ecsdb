@@ -5,7 +5,9 @@ use crate::{BoxedSystem, Ecs, IntoSystem, LastRun, System, system};
 use tracing::{debug, debug_span, instrument, warn};
 
 #[derive(Default)]
-pub struct Schedule(Vec<(BoxedSystem, Box<dyn SchedulingMode>)>);
+pub struct Schedule {
+    systems: Vec<(BoxedSystem, Box<dyn SchedulingMode>)>,
+}
 
 impl Schedule {
     pub fn new() -> Self {
@@ -18,7 +20,8 @@ impl Schedule {
         S::System: 'static,
         M: SchedulingMode,
     {
-        self.0.push((system.into_boxed_system(), Box::new(mode)));
+        self.systems
+            .push((system.into_boxed_system(), Box::new(mode)));
         self
     }
 
@@ -33,7 +36,7 @@ impl Schedule {
 
     pub fn remove_by_name(&mut self, system_name: impl AsRef<str>) -> &mut Self {
         let system_name = system_name.as_ref();
-        self.0.retain(|s| s.0.name() != system_name);
+        self.systems.retain(|s| s.0.name() != system_name);
         self
     }
 
@@ -48,16 +51,20 @@ impl Schedule {
     pub fn iter<'a>(
         &'a self,
     ) -> impl Iterator<Item = &'a (BoxedSystem, Box<dyn SchedulingMode>)> + 'a {
-        self.0.iter()
+        self.systems.iter()
     }
 }
+
+// impl Schedule {
+//     pub fn disable_system<S, Marker>(&mut self, system: S) -> &mut self {}
+// }
 
 impl Schedule {
     #[instrument(level = "debug", skip_all, ret, err)]
     pub fn tick<'a>(&'a self, ecs: &Ecs) -> Result<Vec<(Cow<'a, str>, TickResult)>, anyhow::Error> {
-        let mut results = Vec::with_capacity(self.0.len());
+        let mut results = Vec::with_capacity(self.systems.len());
 
-        for (system, schedule) in self.0.iter() {
+        for (system, schedule) in self.systems.iter() {
             let _span = debug_span!("system", name = %system.name()).entered();
 
             let result = if schedule.should_run(ecs, &system.name()) {
