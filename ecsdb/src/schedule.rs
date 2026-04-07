@@ -22,6 +22,21 @@ impl Schedule {
         self
     }
 
+    pub fn remove<Marker, S>(&mut self, system: S) -> &mut Self
+    where
+        S: IntoSystem<Marker>,
+        S::System: 'static,
+    {
+        let system_name = system.into_system().name();
+        self.remove_by_name(system_name)
+    }
+
+    pub fn remove_by_name(&mut self, system_name: impl AsRef<str>) -> &mut Self {
+        let system_name = system_name.as_ref();
+        self.0.retain(|s| s.0.name() != system_name);
+        self
+    }
+
     pub fn system_names(&self) -> impl Iterator<Item = Cow<'static, str>> {
         self.systems().map(System::name)
     }
