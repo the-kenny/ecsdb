@@ -375,7 +375,7 @@ mod pipeline {
             use nom::{
                 IResult, Parser,
                 branch::alt,
-                bytes::complete::{tag, tag_no_case, take_while1},
+                bytes::complete::{tag, tag_no_case},
                 character::complete::{char, digit1, multispace0},
                 combinator::{map, opt},
                 multi::separated_list1,
@@ -729,7 +729,7 @@ mod pipeline {
                     op: FilterOperator::Ne,
                     value,
                 } => column.extract(row) != *value,
-                Self::Eq { column, op, value } => todo!(),
+                Self::Eq { .. } => todo!("{self:?}"),
                 Self::And(a, b) => a.matches(row) && b.matches(row),
                 Self::Or(a, b) => a.matches(row) || b.matches(row),
             }
@@ -750,14 +750,20 @@ mod pipeline {
         component: String,
     }
 
-    impl std::fmt::Display for Row<'_> {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            let Self { entity, component } = self;
-            let data = entity
-                .dyn_component(component)
+    impl<'a> Row<'a> {
+        pub fn entity(&self) -> ecsdb::Entity<'_> {
+            self.entity
+        }
+
+        pub fn component_name(&self) -> &str {
+            &self.component
+        }
+
+        pub fn component_value(&self) -> impl std::fmt::Display {
+            self.entity
+                .dyn_component(&self.component)
                 .and_then(|c| c.as_json())
-                .unwrap_or_default();
-            f.write_fmt(format_args!("{entity}\t|\t{component}\t|\t{data}"))
+                .unwrap_or_default()
         }
     }
 }
@@ -779,7 +785,12 @@ impl QueryCommand {
         );
 
         for row in chain {
-            println!("{row}");
+            println!(
+                "{:>5} | {:30} | {:5>}",
+                row.entity().id(),
+                row.component_name(),
+                row.component_value()
+            );
         }
 
         Ok(())
