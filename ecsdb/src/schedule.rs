@@ -4,9 +4,15 @@ use crate::{BoxedSystem, Ecs, IntoSystem, LastRun, System, system};
 
 use tracing::{debug, debug_span, instrument, warn};
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum SystemStatus {
+    Enabled,
+    Disabled,
+}
+
 #[derive(Default)]
 pub struct Schedule {
-    systems: Vec<(BoxedSystem, Box<dyn SchedulingMode>)>,
+    systems: Vec<(BoxedSystem, Box<dyn SchedulingMode>, SystemStatus)>,
 }
 
 impl Schedule {
@@ -20,8 +26,11 @@ impl Schedule {
         S::System: 'static,
         M: SchedulingMode,
     {
-        self.systems
-            .push((system.into_boxed_system(), Box::new(mode)));
+        self.systems.push((
+            system.into_boxed_system(),
+            Box::new(mode),
+            SystemStatus::Enabled,
+        ));
         self
     }
 
@@ -50,8 +59,10 @@ impl Schedule {
 
     pub fn iter<'a>(
         &'a self,
-    ) -> impl Iterator<Item = &'a (BoxedSystem, Box<dyn SchedulingMode>)> + 'a {
-        self.systems.iter()
+    ) -> impl Iterator<Item = (&'a BoxedSystem, &'a Box<dyn SchedulingMode>)> + 'a {
+        self.systems
+            .iter()
+            .map(|(system, schedule, _)| (system, schedule))
     }
 }
 
@@ -64,21 +75,22 @@ impl Schedule {
     pub fn tick<'a>(&'a self, ecs: &Ecs) -> Result<Vec<(Cow<'a, str>, TickResult)>, anyhow::Error> {
         let mut results = Vec::with_capacity(self.systems.len());
 
-        for (system, schedule) in self.systems.iter() {
+        for (system, schedule, mode) in self.systems.iter() {
             let _span = debug_span!("system", name = %system.name()).entered();
 
-            let result = if schedule.should_run(ecs, &system.name()) {
-                match ecs.run_dyn_system(system) {
-                    Ok(()) => TickResult::Ok,
-                    Err(e) => {
-                        warn!(error = %e, "System failed");
-                        TickResult::Error(e)
+            let result =
+                if *mode == SystemStatus::Enabled && schedule.should_run(ecs, &system.name()) {
+                    match ecs.run_dyn_system(system) {
+                        Ok(()) => TickResult::Ok,
+                        Err(e) => {
+                            warn!(error = %e, "System failed");
+                            TickResult::Error(e)
+                        }
                     }
-                }
-            } else {
-                debug!("skipping");
-                TickResult::NotScheduled
-            };
+                } else {
+                    debug!("skipping");
+                    TickResult::NotScheduled
+                };
 
             debug!(?result);
             results.push((system.name(), result));
@@ -92,16 +104,57 @@ impl Schedule {
     /// Returns [`UnknownSystemError`] if no system with the given name exists
     /// in this schedule.
     pub fn run_system(&self, ecs: &Ecs, name: &str) -> Result<TickResult, UnknownSystemError> {
-        let Some(system) = self
+        let Some((system, _schedule, mode)) = self
+            .systems
             .iter()
-            .find_map(|(system, _mode)| (system.name() == name).then_some(system))
+            .find(|(system, _schedule, _mode)| system.name() == name)
         else {
             return Err(UnknownSystemError(name.into()));
         };
 
+        if *mode == SystemStatus::Disabled {
+            warn!(system = %system.name(), "Running disabled system")
+        }
+
         match ecs.run_dyn_system(system) {
             Ok(()) => Ok(TickResult::Ok),
             Err(e) => Ok(TickResult::Error(e)),
+        }
+    }
+}
+
+impl Schedule {
+    pub fn enable<S, Marker>(&mut self, system: S) -> &mut Self
+    where
+        S: IntoSystem<Marker>,
+    {
+        self.enable_by_name(system.into_system().name())
+    }
+
+    pub fn disable<S, Marker>(&mut self, system: S) -> &mut Self
+    where
+        S: IntoSystem<Marker>,
+    {
+        self.disable_by_name(system.into_system().name())
+    }
+
+    pub fn enable_by_name(&mut self, system_name: impl AsRef<str>) -> &mut Self {
+        self.change_mode(system_name, SystemStatus::Enabled);
+        self
+    }
+
+    pub fn disable_by_name(&mut self, system_name: impl AsRef<str>) -> &mut Self {
+        self.change_mode(system_name, SystemStatus::Disabled);
+        self
+    }
+
+    fn change_mode(&mut self, system_name: impl AsRef<str>, new_mode: SystemStatus) {
+        for (_system, _schedule, mode) in self
+            .systems
+            .iter_mut()
+            .filter(|(system, _, _)| system.name() == system_name.as_ref())
+        {
+            *mode = new_mode;
         }
     }
 }
