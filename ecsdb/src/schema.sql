@@ -21,7 +21,7 @@ order by
     component asc;
 
 create view if not exists system_components (component) as
-values ('ecsdb::CreatedAt'), ('ecsdb::LastUpdated');
+values ('ecsdb::CreatedAt'), ('ecsdb::LastUpdated'), ('ecsdb_web::LastAccess');
 
 -- Set ecsdb::CreatedAt on initial insert
 create trigger if not exists components_created_insert_trigger
