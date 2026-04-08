@@ -685,7 +685,10 @@ mod pipeline {
 
                     match c.kind() {
                         ecsdb::dyn_component::Kind::Json => FilterValue(c.as_json().unwrap()),
-                        ecsdb::dyn_component::Kind::Blob => unimplemented!("Filter on BLOB"),
+                        ecsdb::dyn_component::Kind::Blob => {
+                            warn!("'data' filter on BLOB is unimplemented. Row will be skipped");
+                            FilterValue(serde_json::Value::Null)
+                        }
                         ecsdb::dyn_component::Kind::Null => FilterValue(serde_json::Value::Null),
                         ecsdb::dyn_component::Kind::Other(r#type) => {
                             unimplemented!("Filter on {:?}", r#type)
