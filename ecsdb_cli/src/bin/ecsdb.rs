@@ -362,7 +362,6 @@ mod pipeline {
 
     use ecsdb::{Ecs, Entity};
     use nom::bytes::complete::take_while;
-    use serde_json::json;
     use tracing::warn;
 
     #[derive(Debug)]
@@ -395,38 +394,42 @@ mod pipeline {
                 Ok((input, s))
             }
 
-            fn double_quoted_string(input: &str) -> IResult<&str, &str> {
-                let (input, _) = char('"').parse(input)?;
-                let (input, s) = take_while(|c| c != '"').parse(input)?;
-                let (input, _) = char('"').parse(input)?;
-                Ok((input, s))
-            }
-
-            fn quoted_string(input: &str) -> IResult<&str, &str> {
-                alt((single_quoted_string, double_quoted_string)).parse(input)
-            }
-
-            fn float_literal(input: &str) -> IResult<&str, FilterValue> {
-                let (input, int_part) = digit1.parse(input)?;
-                let (input, _) = char('.').parse(input)?;
-                let (input, frac_part) = digit1.parse(input)?;
-                let f: f64 = format!("{int_part}.{frac_part}").parse().unwrap();
-                Ok((input, FilterValue(json!(f))))
+            fn json_literal(input: &str) -> IResult<&str, FilterValue> {
+                // serde_json's streaming deserializer rejects non-self-
+                // delineated values (numbers, null, true, false) that are
+                // followed by anything other than JSON whitespace or a JSON
+                // delimiter. Our grammar places `)` right after a value in
+                // e.g. `filter(entity == -1)`, so a direct parse fails.
+                //
+                // However, serde_json updates byte_offset to the position
+                // right after the parsed value *before* the trailing-char
+                // check runs (see serde_json `de.rs` StreamDeserializer::
+                // next), so even on the error path the offset tells us
+                // where the value ended. Re-parsing that exact prefix
+                // succeeds cleanly.
+                let mut stream =
+                    serde_json::Deserializer::from_str(input).into_iter::<serde_json::Value>();
+                let result = stream.next();
+                let offset = stream.byte_offset();
+                let nom_err =
+                    || nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Alt));
+                match result {
+                    Some(Ok(value)) => Ok((&input[offset..], FilterValue(value))),
+                    Some(Err(_)) if offset > 0 => {
+                        match serde_json::from_str::<serde_json::Value>(&input[..offset]) {
+                            Ok(value) => Ok((&input[offset..], FilterValue(value))),
+                            Err(_) => Err(nom_err()),
+                        }
+                    }
+                    _ => Err(nom_err()),
+                }
             }
 
             fn value_literal(input: &str) -> IResult<&str, FilterValue> {
                 alt((
-                    map(tag("null"), |_| FilterValue(serde_json::Value::Null)),
-                    map(tag("true"), |_| FilterValue(serde_json::Value::Bool(true))),
-                    map(tag("false"), |_| {
-                        FilterValue(serde_json::Value::Bool(false))
-                    }),
-                    map(quoted_string, |s: &str| {
+                    json_literal,
+                    map(single_quoted_string, |s: &str| {
                         FilterValue(serde_json::Value::String(s.to_owned()))
-                    }),
-                    float_literal,
-                    map(digit1, |n: &str| {
-                        FilterValue(serde_json::Value::Number(n.parse().unwrap()))
                     }),
                 ))
                 .parse(input)
@@ -832,6 +835,16 @@ mod test {
         "all | take(23)",
         "all | skip(1)",
         "all | skip(1) | sortBy(last_modified)",
+        "all|filter(data == null)",
+        r#"all|filter(data == [1,2,3])"#,
+        r#"all|filter(data == [])"#,
+        r#"all|filter(data == {})"#,
+        r#"all|filter(data == {"key":"value"})"#,
+        r#"all|filter(data == [{"a":1},{"a":2}])"#,
+        "all|filter(entity == -1)",
+        r#"all|filter(data == "hello\nworld")"#,
+        "all|filter(data == 1.5e2)",
+        "all|filter(data == 1.5)",
     ];
 
     #[test]

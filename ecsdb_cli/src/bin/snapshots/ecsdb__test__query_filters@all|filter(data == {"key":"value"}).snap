@@ -1,0 +1,23 @@
+---
+source: ecsdb_cli/src/bin/ecsdb.rs
+description: "Pipeline::parse(\"all|filter(data == {\"key\":\"value\"})\")"
+expression: "Pipeline::parse(pipeline)"
+---
+Ok(
+    Pipeline {
+        stages: [
+            All,
+            Filter(
+                Eq {
+                    column: Data,
+                    op: Eq,
+                    value: FilterValue(
+                        Object {
+                            "key": String("value"),
+                        },
+                    ),
+                },
+            ),
+        ],
+    },
+)

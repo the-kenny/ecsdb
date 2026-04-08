@@ -1,0 +1,21 @@
+---
+source: ecsdb_cli/src/bin/ecsdb.rs
+description: "Pipeline::parse(\"all|filter(entity == -1)\")"
+expression: "Pipeline::parse(pipeline)"
+---
+Ok(
+    Pipeline {
+        stages: [
+            All,
+            Filter(
+                Eq {
+                    column: Entity,
+                    op: Eq,
+                    value: FilterValue(
+                        Number(-1),
+                    ),
+                },
+            ),
+        ],
+    },
+)
