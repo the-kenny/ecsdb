@@ -11,8 +11,8 @@ Ok(
                 Eq {
                     column: Entity,
                     op: Eq,
-                    value: Integer(
-                        42,
+                    value: FilterValue(
+                        Number(42),
                     ),
                 },
             ),
