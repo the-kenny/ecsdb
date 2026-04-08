@@ -435,6 +435,7 @@ mod pipeline {
             fn cmp_op(input: &str) -> IResult<&str, FilterOperator> {
                 alt((
                     map(tag("=="), |_| FilterOperator::Eq),
+                    map(tag("="), |_| FilterOperator::Eq),
                     map(tag("!="), |_| FilterOperator::Ne),
                     map(tag("<="), |_| FilterOperator::Le),
                     map(tag(">="), |_| FilterOperator::Ge),
@@ -822,6 +823,7 @@ mod test {
     const PIPELINES: &[&str] = &[
         "all",
         "all|filter(entity == 42)",
+        "all|filter(entity = 42)",
         "all|filter(entity != 42)",
         "all | filter(entity == 42) | filter(entity == 23)",
         "all | take(23)",
