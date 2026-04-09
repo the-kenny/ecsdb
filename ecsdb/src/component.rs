@@ -159,6 +159,8 @@ pub trait Bundle: Sized {
     // fn from_rusqlite<'a>(components: BundleDataRef<'a>) -> Result<Option<Self>, StorageError>;
 }
 
+pub trait NonEmptyBundle: Bundle {}
+
 pub trait BundleComponent {
     const NAME: &'static str;
     fn to_rusqlite<'a>(&'a self) -> Result<Option<rusqlite::types::ToSqlOutput<'a>>, StorageError>;
@@ -199,6 +201,8 @@ impl<C: Component> Bundle for C {
     }
 }
 
+impl<C: Component> NonEmptyBundle for C {}
+
 impl<C: Component> Bundle for Option<C> {
     const COMPONENTS: &'static [&'static str] = &[C::NAME];
 
@@ -232,6 +236,10 @@ macro_rules! bundle_tuples{
                 )
             }
         }
+
+        impl<$($ts,)+> NonEmptyBundle for ($($ts,)+)
+        where
+            $($ts: BundleComponent,)+ {}
     }
 }
 

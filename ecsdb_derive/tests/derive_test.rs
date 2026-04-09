@@ -43,6 +43,8 @@ pub mod component {
         fn to_rusqlite<'a>(&'a self) -> Result<BundleData<'a>, StorageError>;
     }
 
+    pub trait NonEmptyBundle: Bundle {}
+
     pub trait ComponentWrite {}
 }
 

@@ -219,6 +219,15 @@ fn impl_derive_bundle(ast: syn::DeriveInput) -> TokenStream {
 }
 
 fn derive_bundle_for_struct(name: syn::Ident, struc: syn::DataStruct) -> TokenStream {
+    if struc.fields.is_empty() {
+        return syn::Error::new_spanned(
+               &name,
+               "cannot derive `Bundle` on a struct with no fields: a Bundle must contain at least one component",
+           )
+           .to_compile_error()
+           .into();
+    }
+
     let types = struc.fields.iter().map(|f| &f.ty).collect::<Vec<_>>();
 
     let field_names: Vec<_> = struc.fields.members().collect();
@@ -272,6 +281,8 @@ fn derive_bundle_for_struct(name: syn::Ident, struc: syn::DataStruct) -> TokenSt
                 ])
             }
         }
+
+        impl ecsdb::component::NonEmptyBundle for #name {}
     }
     .into()
 }

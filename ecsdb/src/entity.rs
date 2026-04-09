@@ -4,7 +4,7 @@ use tracing::{debug, trace};
 
 use crate::{
     Component, CreatedAt, DynComponent, Ecs, EntityId, Error, LastUpdated,
-    component::Bundle,
+    component::{Bundle, NonEmptyBundle},
     query::{self},
 };
 
@@ -294,12 +294,11 @@ impl<'a> Entity<'a> {
 #[with_infallible]
 impl<'a> NewEntity<'a> {
     #[tracing::instrument(name = "attach", level = "debug", skip_all)]
-    pub fn try_attach<B: Bundle>(
+    pub fn try_attach<B: NonEmptyBundle>(
         self,
         bundle: B,
     ) -> Result<GenericEntity<'a, WithEntityId>, Error> {
         let data = B::to_rusqlite(&bundle)?;
-        assert!(!data.is_empty());
 
         let mut stmt = self.0.conn.prepare_cached(
             r#"
