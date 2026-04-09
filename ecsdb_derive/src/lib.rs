@@ -2,7 +2,9 @@ extern crate proc_macro;
 
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{Attribute, Data, Expr, Fields, Lit, Meta, Token, punctuated::Punctuated};
+use syn::{
+    Attribute, Data, Expr, ExprLit, Fields, Lit, Meta, Token, parse_quote, punctuated::Punctuated,
+};
 
 #[proc_macro_derive(Component, attributes(component))]
 pub fn derive_component_fn(input: TokenStream) -> TokenStream {
@@ -32,6 +34,126 @@ pub fn derive_resource_fn(input: TokenStream) -> TokenStream {
 pub fn derive_bundle_fn(input: TokenStream) -> TokenStream {
     let ast = syn::parse(input).unwrap();
     impl_derive_bundle(ast)
+}
+
+/// Attribute macro for `impl` blocks that generates an infallible
+/// companion for every `pub fn try_foo(...) -> Result<T, _>`.
+///
+/// For each matching method, appends a `pub fn foo(...) -> T {
+/// self.try_foo(...).expect(stringify!(try_foo)) }`. Non-matching items (non-pub fns, fns whose
+/// return type isn't a two-arg `Result`, non-fn items) get ignored.
+#[proc_macro_attribute]
+pub fn with_infallible(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let mut item_impl = syn::parse_macro_input!(item as syn::ItemImpl);
+    let generated: Vec<syn::ImplItem> = item_impl
+        .items
+        .iter()
+        .filter_map(infallible_compantion)
+        .collect();
+    item_impl.items.extend(generated);
+    quote!(#item_impl).into()
+}
+
+fn infallible_compantion(item: &syn::ImplItem) -> Option<syn::ImplItem> {
+    let syn::ImplItem::Fn(f) = item else {
+        return None;
+    };
+    if !matches!(f.vis, syn::Visibility::Public(_)) {
+        return None;
+    }
+    let sig = &f.sig;
+    if sig.asyncness.is_some()
+        || sig.constness.is_some()
+        || sig.unsafety.is_some()
+        || sig.abi.is_some()
+    {
+        return None;
+    }
+
+    let try_ident = sig.ident.clone();
+    let stripped = try_ident.to_string();
+    let stripped = stripped.strip_prefix("try_")?;
+    if stripped.is_empty() {
+        return None;
+    }
+    let new_ident = syn::Ident::new(stripped, try_ident.span());
+
+    let syn::ReturnType::Type(_, ret_ty) = &sig.output else {
+        return None;
+    };
+    let ok_ty = extract_ok_type(ret_ty)?.clone();
+
+    let mut arg_idents: Vec<syn::Ident> = Vec::new();
+    for input in sig.inputs.iter() {
+        match input {
+            syn::FnArg::Receiver(_) => {}
+            syn::FnArg::Typed(pat_type) => {
+                let syn::Pat::Ident(pat_ident) = &*pat_type.pat else {
+                    return None;
+                };
+                arg_idents.push(pat_ident.ident.clone());
+            }
+        }
+    }
+
+    let type_params: Vec<&syn::Ident> = sig
+        .generics
+        .params
+        .iter()
+        .filter_map(|p| match p {
+            syn::GenericParam::Type(tp) => Some(&tp.ident),
+            _ => None,
+        })
+        .collect();
+    let turbofish = if type_params.is_empty() {
+        quote!()
+    } else {
+        quote!(::<#(#type_params),*>)
+    };
+
+    let mut new_sig = sig.clone();
+    new_sig.ident = new_ident;
+    new_sig.output = parse_quote!(-> #ok_ty);
+
+    let mut new_fn: syn::ImplItemFn = parse_quote! {
+        pub #new_sig {
+            self.#try_ident #turbofish (#(#arg_idents),*).expect(stringify!(#try_ident))
+        }
+    };
+
+    // Keep the documentation
+    new_fn.attrs = f
+        .attrs
+        .iter()
+        .filter(|a| a.path().is_ident("doc"))
+        .cloned()
+        .collect();
+
+    Some(syn::ImplItem::Fn(new_fn))
+}
+
+fn extract_ok_type(ty: &syn::Type) -> Option<&syn::Type> {
+    let syn::Type::Path(tp) = ty else {
+        return None;
+    };
+    let seg = tp.path.segments.last()?;
+    if seg.ident != "Result" {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &seg.arguments else {
+        return None;
+    };
+    let mut type_args = args.args.iter().filter_map(|a| match a {
+        syn::GenericArgument::Type(t) => Some(t),
+        _ => None,
+    });
+    let ok = type_args.next()?;
+
+    type_args.next()?;
+    if type_args.next().is_some() {
+        return None;
+    }
+    Some(ok)
 }
 
 #[derive(Debug, Default)]
