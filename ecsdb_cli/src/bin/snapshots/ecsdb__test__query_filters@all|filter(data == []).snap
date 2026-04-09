@@ -9,7 +9,9 @@ Ok(
             All,
             Filter(
                 Eq {
-                    column: Data,
+                    column: Data(
+                        [],
+                    ),
                     op: Eq,
                     value: FilterValue(
                         Array [],

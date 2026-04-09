@@ -1,0 +1,24 @@
+---
+source: ecsdb_cli/src/bin/ecsdb.rs
+description: "Pipeline::parse(\"all|sortBy(data.priority)\")"
+expression: "Pipeline::parse(pipeline)"
+---
+Ok(
+    Pipeline {
+        stages: [
+            All,
+            SortBy(
+                Column(
+                    Data(
+                        [
+                            Field(
+                                "priority",
+                            ),
+                        ],
+                    ),
+                ),
+                Asc,
+            ),
+        ],
+    },
+)

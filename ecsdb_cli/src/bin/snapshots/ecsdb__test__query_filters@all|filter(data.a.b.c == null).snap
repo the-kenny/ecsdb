@@ -1,0 +1,33 @@
+---
+source: ecsdb_cli/src/bin/ecsdb.rs
+description: "Pipeline::parse(\"all|filter(data.a.b.c == null)\")"
+expression: "Pipeline::parse(pipeline)"
+---
+Ok(
+    Pipeline {
+        stages: [
+            All,
+            Filter(
+                Eq {
+                    column: Data(
+                        [
+                            Field(
+                                "a",
+                            ),
+                            Field(
+                                "b",
+                            ),
+                            Field(
+                                "c",
+                            ),
+                        ],
+                    ),
+                    op: Eq,
+                    value: FilterValue(
+                        Null,
+                    ),
+                },
+            ),
+        ],
+    },
+)

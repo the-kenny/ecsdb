@@ -375,10 +375,10 @@ mod pipeline {
                 IResult, Parser,
                 branch::alt,
                 bytes::complete::{tag, tag_no_case},
-                character::complete::{char, digit1, multispace0},
-                combinator::{map, opt},
-                multi::separated_list1,
-                sequence::{delimited, preceded},
+                character::complete::{char, digit1, multispace0, satisfy},
+                combinator::{map, opt, recognize},
+                multi::{many0, separated_list1},
+                sequence::{delimited, pair, preceded},
             };
 
             fn ws<'a, O>(
@@ -448,11 +448,36 @@ mod pipeline {
                 .parse(input)
             }
 
+            fn ident(input: &str) -> IResult<&str, &str> {
+                recognize(pair(
+                    satisfy(|c: char| c.is_alphabetic() || c == '_'),
+                    take_while(|c: char| c.is_alphanumeric() || c == '_'),
+                ))
+                .parse(input)
+            }
+
+            fn path_segment(input: &str) -> IResult<&str, PathSegment> {
+                alt((
+                    map(preceded(char('.'), ident), |s: &str| {
+                        PathSegment::Field(s.to_owned())
+                    }),
+                    delimited(
+                        char('['),
+                        map(digit1, |n: &str| PathSegment::Index(n.parse().unwrap())),
+                        char(']'),
+                    ),
+                ))
+                .parse(input)
+            }
+
             fn filter_column(input: &str) -> IResult<&str, FilterColumn> {
                 alt((
                     map(tag("entity"), |_| FilterColumn::Entity),
                     map(tag("component"), |_| FilterColumn::Component),
-                    map(tag("data"), |_| FilterColumn::Data),
+                    map(
+                        preceded(tag("data"), many0(path_segment)),
+                        FilterColumn::Data,
+                    ),
                 ))
                 .parse(input)
             }
@@ -633,7 +658,7 @@ mod pipeline {
         }
     }
 
-    #[derive(Debug, Clone, Copy)]
+    #[derive(Debug)]
     pub enum SortField {
         Column(FilterColumn),
         CreatedAt,
@@ -641,7 +666,7 @@ mod pipeline {
     }
 
     impl SortField {
-        fn extract(self, row: &Row<'_>) -> FilterValue {
+        fn extract(&self, row: &Row<'_>) -> FilterValue {
             match self {
                 Self::Column(column) => column.extract(row),
                 Self::CreatedAt => FilterValue(serde_json::Value::String(
@@ -663,16 +688,37 @@ mod pipeline {
     #[derive(Debug, PartialEq)]
     pub struct FilterValue(serde_json::Value);
 
-    #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+    #[derive(Debug, Clone, PartialEq, Eq)]
     pub enum FilterColumn {
         Entity,
         Component,
-        Data,
+        Data(Vec<PathSegment>),
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum PathSegment {
+        Field(String),
+        Index(usize),
+    }
+
+    fn navigate_path<'a>(
+        value: &'a serde_json::Value,
+        path: &[PathSegment],
+    ) -> Option<&'a serde_json::Value> {
+        let mut current = value;
+        for segment in path {
+            current = match (segment, current) {
+                (PathSegment::Field(name), serde_json::Value::Object(m)) => m.get(name)?,
+                (PathSegment::Index(i), serde_json::Value::Array(a)) => a.get(*i)?,
+                _ => return None,
+            };
+        }
+        Some(current)
     }
 
     impl FilterColumn {
         #[tracing::instrument(level = "debug")]
-        fn extract(self, row: &Row) -> FilterValue {
+        fn extract(&self, row: &Row) -> FilterValue {
             match self {
                 FilterColumn::Entity => {
                     FilterValue(serde_json::Value::Number(row.entity.id().into()))
@@ -680,23 +726,30 @@ mod pipeline {
                 FilterColumn::Component => {
                     FilterValue(serde_json::Value::String(row.component.clone()))
                 }
-                FilterColumn::Data => {
+                FilterColumn::Data(path) => {
                     let Some(c) = row.entity.dyn_component(&row.component) else {
                         warn!("Failed to get DynComponent");
                         return FilterValue(serde_json::Value::Null);
                     };
 
-                    match c.kind() {
-                        ecsdb::dyn_component::Kind::Json => FilterValue(c.as_json().unwrap()),
+                    let value = match c.kind() {
+                        ecsdb::dyn_component::Kind::Json => c.as_json().unwrap(),
                         ecsdb::dyn_component::Kind::Blob => {
                             warn!("'data' filter on BLOB is unimplemented. Row will be skipped");
-                            FilterValue(serde_json::Value::Null)
+                            return FilterValue(serde_json::Value::Null);
                         }
-                        ecsdb::dyn_component::Kind::Null => FilterValue(serde_json::Value::Null),
+                        ecsdb::dyn_component::Kind::Null => {
+                            return FilterValue(serde_json::Value::Null);
+                        }
                         ecsdb::dyn_component::Kind::Other(r#type) => {
                             unimplemented!("Filter on {:?}", r#type)
                         }
-                    }
+                    };
+
+                    let resolved = navigate_path(&value, path)
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
+                    FilterValue(resolved)
                 }
             }
         }
@@ -845,6 +898,13 @@ mod test {
         r#"all|filter(data == "hello\nworld")"#,
         "all|filter(data == 1.5e2)",
         "all|filter(data == 1.5)",
+        r#"all|filter(data.last_updated == "foo")"#,
+        "all|filter(data.array[3] == 42)",
+        r#"all|filter(data.items[0].id == "x")"#,
+        "all|filter(data.a.b.c == null)",
+        "all|filter(data[0] == 1)",
+        "all|sortBy(data.priority)",
+        "all|sortBy(data.score desc)",
     ];
 
     #[test]

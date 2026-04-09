@@ -1,0 +1,33 @@
+---
+source: ecsdb_cli/src/bin/ecsdb.rs
+description: "Pipeline::parse(\"all|filter(data.items[0].id == \"x\")\")"
+expression: "Pipeline::parse(pipeline)"
+---
+Ok(
+    Pipeline {
+        stages: [
+            All,
+            Filter(
+                Eq {
+                    column: Data(
+                        [
+                            Field(
+                                "items",
+                            ),
+                            Index(
+                                0,
+                            ),
+                            Field(
+                                "id",
+                            ),
+                        ],
+                    ),
+                    op: Eq,
+                    value: FilterValue(
+                        String("x"),
+                    ),
+                },
+            ),
+        ],
+    },
+)
