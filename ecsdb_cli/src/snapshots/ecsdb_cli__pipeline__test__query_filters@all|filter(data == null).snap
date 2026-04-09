@@ -1,6 +1,6 @@
 ---
-source: ecsdb_cli/src/bin/ecsdb.rs
-description: "Pipeline::parse(\"all|filter(data == \"hello\\nworld\")\")"
+source: ecsdb_cli/src/pipeline.rs
+description: "Pipeline::parse(\"all|filter(data == null)\")"
 expression: "Pipeline::parse(pipeline)"
 ---
 Ok(
@@ -14,7 +14,7 @@ Ok(
                     ),
                     op: Eq,
                     value: FilterValue(
-                        String("hello\nworld"),
+                        Null,
                     ),
                 },
             ),

@@ -1,5 +1,5 @@
 ---
-source: ecsdb_cli/src/bin/ecsdb.rs
+source: ecsdb_cli/src/pipeline.rs
 description: "Pipeline::parse(\"all | take(23)\")"
 expression: "Pipeline::parse(pipeline)"
 ---

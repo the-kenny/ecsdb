@@ -1,6 +1,6 @@
 ---
-source: ecsdb_cli/src/bin/ecsdb.rs
-description: "Pipeline::parse(\"all|filter(data.last_updated == \"foo\")\")"
+source: ecsdb_cli/src/pipeline.rs
+description: "Pipeline::parse(\"all|filter(data.a.b.c == null)\")"
 expression: "Pipeline::parse(pipeline)"
 ---
 Ok(
@@ -12,13 +12,19 @@ Ok(
                     column: Data(
                         [
                             Field(
-                                "last_updated",
+                                "a",
+                            ),
+                            Field(
+                                "b",
+                            ),
+                            Field(
+                                "c",
                             ),
                         ],
                     ),
                     op: Eq,
                     value: FilterValue(
-                        String("foo"),
+                        Null,
                     ),
                 },
             ),

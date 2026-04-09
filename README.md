@@ -165,7 +165,7 @@ value using `==`, `=`, `!=`, `<`, `<=`, `>`, `>=`.
 The right hand side of a comparison in `filter(...)` expressions are parsed as
 JSON literals:
 
-```
+```text
 query all | filter(data == null)
 query all | filter(entity == -1)
 query all | filter(data == 1.5e2)

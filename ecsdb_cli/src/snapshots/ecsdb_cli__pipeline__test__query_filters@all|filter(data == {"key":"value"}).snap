@@ -1,6 +1,6 @@
 ---
-source: ecsdb_cli/src/bin/ecsdb.rs
-description: "Pipeline::parse(\"all|filter(data == 1.5)\")"
+source: ecsdb_cli/src/pipeline.rs
+description: "Pipeline::parse(\"all|filter(data == {\"key\":\"value\"})\")"
 expression: "Pipeline::parse(pipeline)"
 ---
 Ok(
@@ -14,7 +14,9 @@ Ok(
                     ),
                     op: Eq,
                     value: FilterValue(
-                        Number(1.5),
+                        Object {
+                            "key": String("value"),
+                        },
                     ),
                 },
             ),

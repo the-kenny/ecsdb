@@ -41,7 +41,6 @@ pub mod component {
         }
 
         fn to_rusqlite<'a>(&'a self) -> Result<BundleData<'a>, StorageError>;
-        // fn from_rusqlite<'a>(components: BundleDataRef<'a>) -> Result<Option<Self>, StorageError>;
     }
 
     pub trait ComponentWrite {}
@@ -103,6 +102,7 @@ fn derive_name_attribute() {
 }
 
 #[test]
+#[allow(deprecated)]
 fn test_resource_standalone() {
     // Resource without Component derives Component
     #[derive(Resource)]

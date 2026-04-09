@@ -1,6 +1,6 @@
 ---
-source: ecsdb_cli/src/bin/ecsdb.rs
-description: "Pipeline::parse(\"all|filter(data == [])\")"
+source: ecsdb_cli/src/pipeline.rs
+description: "Pipeline::parse(\"all|filter(data == 1.5)\")"
 expression: "Pipeline::parse(pipeline)"
 ---
 Ok(
@@ -14,7 +14,7 @@ Ok(
                     ),
                     op: Eq,
                     value: FilterValue(
-                        Array [],
+                        Number(1.5),
                     ),
                 },
             ),

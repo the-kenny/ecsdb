@@ -1,6 +1,6 @@
 ---
-source: ecsdb_cli/src/bin/ecsdb.rs
-description: "Pipeline::parse(\"all|sortBy(data.priority)\")"
+source: ecsdb_cli/src/pipeline.rs
+description: "Pipeline::parse(\"all|sortBy(data.score desc)\")"
 expression: "Pipeline::parse(pipeline)"
 ---
 Ok(
@@ -12,12 +12,12 @@ Ok(
                     Data(
                         [
                             Field(
-                                "priority",
+                                "score",
                             ),
                         ],
                     ),
                 ),
-                Asc,
+                Desc,
             ),
         ],
     },

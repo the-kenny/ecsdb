@@ -1,6 +1,6 @@
 ---
-source: ecsdb_cli/src/bin/ecsdb.rs
-description: "Pipeline::parse(\"all|filter(data == null)\")"
+source: ecsdb_cli/src/pipeline.rs
+description: "Pipeline::parse(\"all|filter(data == 1.5e2)\")"
 expression: "Pipeline::parse(pipeline)"
 ---
 Ok(
@@ -14,7 +14,7 @@ Ok(
                     ),
                     op: Eq,
                     value: FilterValue(
-                        Null,
+                        Number(150.0),
                     ),
                 },
             ),

@@ -1,6 +1,6 @@
 ---
-source: ecsdb_cli/src/bin/ecsdb.rs
-description: "Pipeline::parse(\"all|filter(data.array[3] == 42)\")"
+source: ecsdb_cli/src/pipeline.rs
+description: "Pipeline::parse(\"all|filter(data.items[0].id == \"x\")\")"
 expression: "Pipeline::parse(pipeline)"
 ---
 Ok(
@@ -12,16 +12,19 @@ Ok(
                     column: Data(
                         [
                             Field(
-                                "array",
+                                "items",
                             ),
                             Index(
-                                3,
+                                0,
+                            ),
+                            Field(
+                                "id",
                             ),
                         ],
                     ),
                     op: Eq,
                     value: FilterValue(
-                        Number(42),
+                        String("x"),
                     ),
                 },
             ),

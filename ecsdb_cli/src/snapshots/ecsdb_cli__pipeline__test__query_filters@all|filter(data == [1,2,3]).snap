@@ -1,6 +1,6 @@
 ---
-source: ecsdb_cli/src/bin/ecsdb.rs
-description: "Pipeline::parse(\"all|filter(data == [{\"a\":1},{\"a\":2}])\")"
+source: ecsdb_cli/src/pipeline.rs
+description: "Pipeline::parse(\"all|filter(data == [1,2,3])\")"
 expression: "Pipeline::parse(pipeline)"
 ---
 Ok(
@@ -15,12 +15,9 @@ Ok(
                     op: Eq,
                     value: FilterValue(
                         Array [
-                            Object {
-                                "a": Number(1),
-                            },
-                            Object {
-                                "a": Number(2),
-                            },
+                            Number(1),
+                            Number(2),
+                            Number(3),
                         ],
                     ),
                 },

@@ -1,5 +1,5 @@
 ---
-source: src/query/ir.rs
+source: ecsdb/src/query/ir.rs
 description: "And([WithComponent(\"ecsdb::Foo\"), WithoutComponent(\"ecsdb::Bar\")]).where_clause()"
 ---
 SqlFragment<ecsdb::query::ir::Where> {
