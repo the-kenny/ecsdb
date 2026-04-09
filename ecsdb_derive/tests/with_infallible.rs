@@ -55,6 +55,24 @@ fn generates_infallible_for_borrowed_fn_with_lifetime() {
     assert_eq!(f.borrow_with(s), "hello");
 }
 
+#[with_infallible]
+impl Foo {
+    pub fn try_iter_items<'a, T: Clone>(
+        &'a self,
+        items: &'a [T],
+    ) -> Result<impl Iterator<Item = T> + 'a + use<'a, T>, MyErr> {
+        Ok(items.iter().cloned())
+    }
+}
+
+#[test]
+fn generates_infallible_for_impl_trait_with_use_capture() {
+    let f = Foo;
+    let xs = [1u8, 2, 3];
+    let collected: Vec<u8> = f.iter_items(&xs).collect();
+    assert_eq!(collected, vec![1, 2, 3]);
+}
+
 #[test]
 fn leaves_untransformable_items_alone() {
     let f = Foo;

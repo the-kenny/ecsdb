@@ -1,20 +1,13 @@
 use std::ops::{Deref, DerefMut};
 
+use ecsdb_derive::with_infallible;
+
 use crate::{Component, Ecs, Error};
 
+#[with_infallible]
 impl Ecs {
-    pub fn resource<R: Component>(&self) -> Option<R> {
-        self.try_resource::<R>().unwrap()
-    }
-
     pub fn try_resource<R: Component>(&self) -> Result<Option<R>, Error> {
         self.world_entity().try_component::<R>()
-    }
-
-    pub fn resource_mut<'a, R: Component + Default>(
-        &'a mut self,
-    ) -> impl DerefMut<Target = R> + 'a {
-        self.try_resource_mut().unwrap()
     }
 
     pub fn try_resource_mut<'a, R: Component + Default>(
@@ -24,17 +17,9 @@ impl Ecs {
         Ok(ResourceProxy(self, resource))
     }
 
-    pub fn attach_resource<R: Component>(&self, resource: R) {
-        self.try_attach_resource(resource).unwrap()
-    }
-
     pub fn try_attach_resource<R: Component>(&self, resource: R) -> Result<(), Error> {
         self.world_entity().try_attach(resource)?;
         Ok(())
-    }
-
-    pub fn detach_resource<R: Component>(&self) {
-        self.try_detach_resource::<R>().unwrap()
     }
 
     pub fn try_detach_resource<R: Component>(&self) -> Result<(), Error> {

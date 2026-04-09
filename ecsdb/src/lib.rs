@@ -7,6 +7,7 @@ pub mod dyn_component;
 pub use dyn_component::DynComponent;
 
 pub mod entity;
+use ecsdb_derive::with_infallible;
 pub use entity::{Entity, NewEntity};
 
 pub mod extension;
@@ -40,8 +41,6 @@ use std::borrow::Cow;
 use std::path::Path;
 
 use tracing::{debug, instrument};
-
-use crate::query::QueryFilterValue;
 
 pub type EntityId = i64;
 
@@ -146,15 +145,8 @@ impl Ecs {
     }
 }
 
+#[with_infallible]
 impl Ecs {
-    pub fn query<'a, D, F>(&'a self) -> impl Iterator<Item = D::Output<'a>> + 'a
-    where
-        D: query::QueryData + 'a,
-        F: query::QueryFilter + 'a,
-    {
-        self.try_query::<D, F>().unwrap()
-    }
-
     #[instrument(name = "query", level = "debug", skip_all)]
     pub fn try_query<'a, D, F>(&'a self) -> Result<impl Iterator<Item = D::Output<'a>> + 'a, Error>
     where
@@ -167,17 +159,6 @@ impl Ecs {
         );
         let query = query::Query::<D, F>::new(self);
         query.try_iter()
-    }
-
-    pub fn query_filtered<'a, D, F>(
-        &'a self,
-        filter: impl QueryFilterValue + 'a,
-    ) -> impl Iterator<Item = D::Output<'a>> + 'a
-    where
-        D: query::QueryData + 'a,
-        F: query::QueryFilter + 'a,
-    {
-        self.try_query_fitered::<D, F>(filter).unwrap()
     }
 
     #[instrument(name = "find", level = "debug", skip_all)]
@@ -194,14 +175,8 @@ impl Ecs {
     }
 }
 
+#[component::with_infallible]
 impl Ecs {
-    pub fn find<'a>(
-        &'a self,
-        filter_value: impl query::QueryFilterValue + 'a,
-    ) -> impl Iterator<Item = Entity<'a>> + 'a {
-        self.try_find(filter_value).unwrap()
-    }
-
     pub fn try_find<'a>(
         &'a self,
         filter_value: impl query::QueryFilterValue + 'a,

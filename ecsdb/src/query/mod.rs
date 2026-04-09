@@ -1,3 +1,4 @@
+use ecsdb_derive::with_infallible;
 use tracing::trace;
 
 use crate::{Entity, EntityId, component::Bundle};
@@ -65,28 +66,13 @@ impl<'a, C, F, V> Query<'a, C, F, V> {
     }
 }
 
+#[with_infallible]
 impl<'a, D, F, V> Query<'a, D, F, V>
 where
     D: QueryData + 'a,
     F: QueryFilter,
     V: QueryFilterValue,
 {
-    pub fn iter(&self) -> impl Iterator<Item = D::Output<'a>> + 'a + use<'a, D, F, V> {
-        self.try_iter().unwrap()
-    }
-
-    pub fn reverse_iter(&self) -> impl Iterator<Item = D::Output<'a>> + 'a + use<'a, D, F, V> {
-        self.try_reverse_iter().unwrap()
-    }
-
-    pub fn entities(&self) -> impl Iterator<Item = Entity<'a>> + 'a + use<'a, D, F, V> {
-        self.try_entities().unwrap()
-    }
-
-    pub fn reverse_entities(&self) -> impl Iterator<Item = Entity<'a>> + 'a + use<'a, D, F, V> {
-        self.try_reverse_entities().unwrap()
-    }
-
     pub fn try_iter(
         &self,
     ) -> Result<impl Iterator<Item = D::Output<'a>> + 'a + use<'a, D, F, V>, crate::Error> {

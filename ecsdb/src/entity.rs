@@ -1,3 +1,4 @@
+use ecsdb_derive::with_infallible;
 use rusqlite::{OptionalExtension, params};
 use tracing::{debug, trace};
 
@@ -36,11 +37,10 @@ impl<'a> Entity<'a> {
     pub fn id(self) -> EntityId {
         (self.1).0
     }
+}
 
-    pub fn exists(self) -> bool {
-        self.try_exists().expect("Entity::try_exists")
-    }
-
+#[with_infallible]
+impl<'a> Entity<'a> {
     #[tracing::instrument(name = "exists", level = "debug")]
     pub fn try_exists(self) -> Result<bool, Error> {
         self.0
@@ -55,10 +55,6 @@ impl<'a> Entity<'a> {
             .map_err(Error::from)
     }
 
-    pub fn created_at(self) -> chrono::DateTime<chrono::Utc> {
-        self.try_created_at().expect("Non-Error")
-    }
-
     #[tracing::instrument(name = "created_at", level = "debug")]
     pub fn try_created_at(self) -> Result<chrono::DateTime<chrono::Utc>, Error> {
         self.try_component()
@@ -66,19 +62,11 @@ impl<'a> Entity<'a> {
             .map(|CreatedAt(lu)| lu)
     }
 
-    pub fn last_modified(self) -> chrono::DateTime<chrono::Utc> {
-        self.try_last_modified().expect("Non-Error")
-    }
-
     #[tracing::instrument(name = "last_modified", level = "debug")]
     pub fn try_last_modified(self) -> Result<chrono::DateTime<chrono::Utc>, Error> {
         self.try_component()
             .map(Option::unwrap_or_default)
             .map(|LastUpdated(lu)| lu)
-    }
-
-    pub fn component_names(self) -> impl Iterator<Item = String> {
-        self.try_component_names().unwrap()
     }
 
     #[tracing::instrument(name = "component_names", level = "debug")]
@@ -92,16 +80,15 @@ impl<'a> Entity<'a> {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(names.into_iter())
     }
+}
 
-    pub fn has<B: Bundle>(self) -> bool {
-        self.try_has::<B>().unwrap()
-    }
-
+#[with_infallible]
+impl<'a> Entity<'a> {
     pub fn try_has<B: Bundle>(self) -> Result<bool, Error> {
-        self.has_all_dynamic(B::COMPONENTS)
+        self.try_has_all_dynamic(B::COMPONENTS)
     }
 
-    fn has_all_dynamic(self, component_names: &[&str]) -> Result<bool, Error> {
+    fn try_has_all_dynamic(self, component_names: &[&str]) -> Result<bool, Error> {
         let mut stmt = self
             .0
             .conn
@@ -116,11 +103,8 @@ impl<'a> Entity<'a> {
     }
 }
 
+#[with_infallible]
 impl<'a> Entity<'a> {
-    pub fn destroy(self) {
-        self.try_destroy().unwrap();
-    }
-
     #[tracing::instrument(name = "destroy", level = "debug")]
     pub fn try_destroy(self) -> Result<(), Error> {
         self.0
@@ -131,14 +115,8 @@ impl<'a> Entity<'a> {
     }
 }
 
+#[with_infallible]
 impl<'a> Entity<'a> {
-    pub fn component<T: Component>(self) -> Option<T> {
-        match self.try_component::<T>() {
-            Ok(c) => c,
-            Err(e) => panic!("Failed to get Component {}: {e}", T::NAME),
-        }
-    }
-
     pub fn try_component<T: Component>(self) -> Result<Option<T>, Error> {
         let name = T::component_name();
         let mut query = self
@@ -158,11 +136,8 @@ impl<'a> Entity<'a> {
     }
 }
 
+#[with_infallible]
 impl<'a> Entity<'a> {
-    pub fn dyn_component(self, name: &'a str) -> Option<DynComponent<'a>> {
-        self.try_dyn_component(name).unwrap()
-    }
-
     pub fn try_dyn_component(self, name: &'a str) -> Result<Option<DynComponent<'a>>, Error> {
         let mut query = self
             .0
@@ -182,12 +157,8 @@ impl<'a> Entity<'a> {
     }
 }
 
+#[with_infallible]
 impl<'a> Entity<'a> {
-    pub fn dyn_attach(self, component: DynComponent<'a>) -> Self {
-        self.try_dyn_attach(component)
-            .expect("Entity::try_dyn_attach")
-    }
-
     pub fn try_dyn_attach(self, component: DynComponent<'a>) -> Result<Self, Error> {
         let mut query = self.0.conn.prepare_cached(
             "update components set data = ?1 where entity = ?2 and component = ?3",
@@ -198,12 +169,8 @@ impl<'a> Entity<'a> {
     }
 }
 
+#[with_infallible]
 impl<'a> Entity<'a> {
-    pub fn detach_named(self, component: &str) -> Self {
-        self.try_detach_named(component)
-            .expect("Entity::try_detach_named")
-    }
-
     pub fn try_detach_named(self, component: &str) -> Result<Self, Error> {
         let mut query = self
             .0
@@ -244,35 +211,16 @@ pub enum ModifyComponentError {
     Fn(anyhow::Error),
 }
 
+#[with_infallible]
 impl<'a> Entity<'a> {
     pub fn try_matches<D: query::QueryFilter>(self) -> Result<bool, Error> {
         let q = query::Query::<(), D, EntityId>::with_filter(self.db(), self.id());
         Ok(q.try_iter()?.next().is_some())
     }
-
-    pub fn matches<D: query::QueryFilter>(self) -> bool {
-        self.try_matches::<D>().unwrap()
-    }
-
-    // pub fn try_matches_filtered<F: query::QueryFilter>(self, filter: F) -> Result<bool, Error> {
-    //     let q = query::Query::<(), F>::new(self.db(), filter);
-    //     Ok(q.try_iter()?.next().is_some())
-    // }
-
-    // pub fn matches_filtered<F: query::QueryFilter>(self, filter: F) -> bool {
-    //     self.try_matches_filtered::<F>(filter).unwrap()
-    // }
 }
 
+#[with_infallible]
 impl<'a> Entity<'a> {
-    pub fn attach<B: Bundle>(self, component: B) -> Self {
-        self.try_attach::<B>(component).unwrap()
-    }
-
-    pub fn detach<B: Bundle>(self) -> Self {
-        self.try_detach::<B>().unwrap()
-    }
-
     #[tracing::instrument(name = "attach", level = "debug", skip_all)]
     pub fn try_attach<B: Bundle>(self, component: B) -> Result<Self, Error> {
         let components = B::to_rusqlite(&component)?;
@@ -324,13 +272,8 @@ impl<'a> Entity<'a> {
     }
 }
 
+#[with_infallible]
 impl<'a> Entity<'a> {
-    #[tracing::instrument(name = "detach_all", level = "debug")]
-    pub fn detach_all(self) -> Self {
-        self.try_detach_all().expect("Entity::try_detach_all");
-        self
-    }
-
     #[tracing::instrument(name = "detach_all", level = "debug")]
     pub fn try_detach_all(self) -> Result<Self, Error> {
         self
@@ -348,19 +291,8 @@ impl<'a> Entity<'a> {
     }
 }
 
+#[with_infallible]
 impl<'a> NewEntity<'a> {
-    pub fn attach<B: Bundle>(self, component: B) -> GenericEntity<'a, WithEntityId> {
-        self.try_attach::<B>(component).unwrap()
-    }
-
-    pub fn detach<B: Bundle>(&mut self) -> &mut Self {
-        self
-    }
-
-    pub fn component_names(self) -> impl Iterator<Item = String> {
-        std::iter::empty()
-    }
-
     #[tracing::instrument(name = "attach", level = "debug", skip_all)]
     pub fn try_attach<B: Bundle>(
         self,
