@@ -144,3 +144,44 @@ schedule.tick(&ecs);
 - `schedule::After` runs one system after another finished
 - `schedule::Once` runs a system once per database
 - `schedule::Always` runs a system on every `Schedule::tick`
+
+## CLI
+
+`ecsdb_cli` provides an `ecsdb` binary with an interactive REPL:
+
+```sh
+ecsdb my.db 'query all | filter(component == "foo::bar::Headline") | take(10)'
+```
+
+The `query` command takes a pipeline of stages separated by `|`. Available
+stages include `all`, `filter(expr)`, `sortBy(field [asc|desc])`, `take(n)`, and
+`skip(n)`. 
+
+Filter expressions compare a column from `{entity, component, data}` against a
+value using `==`, `=`, `!=`, `<`, `<=`, `>`, `>=`.
+
+### Filter values
+
+The right hand side of a comparison in `filter(...)` expressions are parsed as
+JSON literals:
+
+```
+query all | filter(data == null)
+query all | filter(entity == -1)
+query all | filter(data == 1.5e2)
+query all | filter(data == "hello\nworld")
+query all | filter(data == [1, 2, 3])
+query all | filter(data == {"key": "value"})
+query all | filter(data == [{"a": 1}, {"a": 2}])
+```
+
+### Path access on `data`
+
+JSON values in `data` can be accessed with a simplified JSON access notation:
+
+```text
+query all | filter(data.name == "Foo")
+query all | filter(data.items[0].id == "x")
+query all | filter(data.a.b.c == null)
+query all | sortBy(data.priority desc)
+```
