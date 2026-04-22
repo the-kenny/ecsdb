@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use crate::{BoxedSystem, Ecs, IntoSystem, LastRun, System, system};
+use crate::{BoxedSystem, Ecs, IntoSystem, LastResult, LastRun, System, SystemResult, system};
 
 use tracing::{debug, debug_span, instrument, warn};
 
@@ -237,19 +237,33 @@ impl After {
 impl SchedulingMode for After {
     #[instrument(level = "debug", skip_all, fields(self), ret)]
     fn should_run(&self, ecs: &crate::Ecs, system: &str) -> bool {
-        let predecessor_last_run = ecs.system_entity(&self.0).and_then(|e| e.component());
+        let Some(predecessor) = ecs.system_entity(&self.0) else {
+            debug!(reason = "Predecessor system not found", "skipping");
+            return false;
+        };
+
+        let predecessor_last_run = predecessor.component::<LastRun>();
+        let predecessor_last_result = predecessor.component::<LastResult>();
 
         let our_last_run = ecs
             .system_entity(system)
             .and_then(|e| e.component::<LastRun>());
 
-        debug!(?our_last_run, ?predecessor_last_run);
+        debug!(
+            ?our_last_run,
+            ?predecessor_last_run,
+            ?predecessor_last_result
+        );
 
-        match (predecessor_last_run, our_last_run) {
-            (None, _) => false,
-            (Some(_), None) => true,
-            (Some(LastRun(before)), Some(LastRun(after))) if before > after => true,
-            (Some(_), Some(_)) => false,
+        match (predecessor_last_run, predecessor_last_result, our_last_run) {
+            (None, _, _) => false,
+            (Some(_), None, None) => false,
+            (Some(_), Some(LastResult(SystemResult::Err(_) | SystemResult::Skipped)), None) => {
+                false
+            }
+            (Some(_), _, None) => true,
+            (Some(LastRun(before)), _, Some(LastRun(after))) if before > after => true,
+            (Some(_), _, Some(_)) => false,
         }
     }
 }
@@ -322,6 +336,8 @@ mod test {
         let results = schedule.tick(&ecs).unwrap();
 
         assert_eq!(results.len(), 3);
+
+        dbg!(&results);
 
         // First system should run successfully
         assert!(matches!(results[0].1, TickResult::Ok));

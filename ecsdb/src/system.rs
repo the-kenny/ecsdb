@@ -15,9 +15,12 @@ pub struct Name(pub String);
 #[derive(Serialize, Deserialize, Component, Debug)]
 pub struct LastRun(pub chrono::DateTime<chrono::Utc>);
 
+#[derive(Serialize, Deserialize, Component, Debug)]
+pub struct LastResult(pub SystemResult<(), String>);
+
 pub trait System: Send + Sync {
     fn name(&self) -> Cow<'static, str>;
-    fn run_system(&self, app: &Ecs) -> Result<(), anyhow::Error>;
+    fn run_system(&self, app: &Ecs) -> SystemResult;
 }
 
 pub trait IntoSystem<Marker>: Sized {
@@ -45,7 +48,7 @@ impl<'a, S: System> System for &'a S {
         (*self).name()
     }
 
-    fn run_system(&self, app: &Ecs) -> Result<(), anyhow::Error> {
+    fn run_system(&self, app: &Ecs) -> SystemResult {
         (*self).run_system(app)
     }
 }
@@ -57,7 +60,7 @@ impl System for BoxedSystem {
         System::name(self.as_ref())
     }
 
-    fn run_system(&self, app: &Ecs) -> Result<(), anyhow::Error> {
+    fn run_system(&self, app: &Ecs) -> SystemResult {
         System::run_system(self.as_ref(), app)
     }
 }
@@ -97,33 +100,51 @@ where
         Cow::Borrowed(std::any::type_name::<F>())
     }
 
-    fn run_system(&self, app: &Ecs) -> Result<(), anyhow::Error> {
+    fn run_system(&self, app: &Ecs) -> SystemResult {
         SystemParamFunction::run_system(&self.system, F::Params::get_param(app, &self.name()))
-            .into_result()
     }
 }
 
 pub trait SystemParamFunction<Marker>: Send + Sync + 'static {
     type Params: SystemParam;
-    fn run_system(
-        &self,
-        param: <Self::Params as SystemParam>::Item<'_>,
-    ) -> Result<(), anyhow::Error>;
+    fn run_system(&self, param: <Self::Params as SystemParam>::Item<'_>) -> SystemResult;
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone, Copy)]
+pub enum SystemResult<S = (), E = anyhow::Error> {
+    Ok(S),
+    Err(E),
+    Skipped,
+}
+
+impl<S, E> From<Result<S, E>> for SystemResult<S, E> {
+    fn from(value: Result<S, E>) -> Self {
+        match value {
+            Ok(v) => Self::Ok(v),
+            Err(v) => Self::Err(v),
+        }
+    }
 }
 
 pub trait SystemOutput {
-    fn into_result(self) -> Result<(), anyhow::Error>;
+    fn into_result(self) -> SystemResult;
 }
 
 impl SystemOutput for () {
-    fn into_result(self) -> Result<(), anyhow::Error> {
-        Ok(())
+    fn into_result(self) -> SystemResult {
+        SystemResult::Ok(())
+    }
+}
+
+impl SystemOutput for SystemResult {
+    fn into_result(self) -> SystemResult {
+        self
     }
 }
 
 impl SystemOutput for Result<(), anyhow::Error> {
-    fn into_result(self) -> Result<(), anyhow::Error> {
-        self
+    fn into_result(self) -> SystemResult {
+        SystemResult::from(self)
     }
 }
 
@@ -133,7 +154,7 @@ where
     Out: SystemOutput,
 {
     type Params = ();
-    fn run_system(&self, _app: ()) -> Result<(), anyhow::Error> {
+    fn run_system(&self, _app: ()) -> SystemResult {
         self().into_result()
     }
 }
@@ -155,7 +176,7 @@ macro_rules! impl_system_function {
 
             #[allow(non_snake_case)]
             #[allow(clippy::too_many_arguments)]
-            fn run_system(&self, p: SystemParamItem<($($param,)*)>) -> Result<(), anyhow::Error> {
+            fn run_system(&self, p: SystemParamItem<($($param,)*)>) -> SystemResult {
                 let ($($param,)*) = p;
                 (&self)( $($param),*).into_result()
             }
@@ -216,16 +237,27 @@ impl Ecs {
 
         info!("Running");
 
-        if let Err(e) = system.run_system(self) {
-            error!(?e);
-            return Err(e);
-        }
+        let result = system.run_system(self);
 
         system_entity.attach(LastRun(chrono::Utc::now()));
 
-        debug!(elapsed_ms = started.elapsed().as_millis(), "Finished",);
+        debug!(elapsed_ms = started.elapsed().as_millis(), "Finished");
 
-        Ok(())
+        match result {
+            SystemResult::Ok(v) => {
+                system_entity.attach(LastResult(SystemResult::Ok(v)));
+                Ok(())
+            }
+            SystemResult::Err(error) => {
+                error!(%error);
+                system_entity.attach(LastResult(SystemResult::Err(error.to_string())));
+                Err(error)
+            }
+            SystemResult::Skipped => {
+                system_entity.attach(LastResult(SystemResult::Skipped));
+                Ok(())
+            }
+        }
     }
 
     pub fn system_entities<'a>(&'a self) -> impl Iterator<Item = (String, Entity<'a>)> {
@@ -327,7 +359,9 @@ mod tests {
     use std::marker::PhantomData;
 
     use crate::query::With;
-    use crate::{Ecs, Entity, IntoSystem, System, SystemEntity, query};
+    use crate::{
+        Ecs, Entity, IntoSystem, LastResult, LastRun, System, SystemEntity, SystemResult, query,
+    };
 
     #[test]
     fn run_system() {
@@ -360,6 +394,43 @@ mod tests {
     }
 
     #[test]
+    fn run_dyn_system_components() {
+        let ecs = Ecs::open_in_memory().unwrap();
+        let ok_system = IntoSystem::into_boxed_system(|| SystemResult::Ok(()));
+        let err_system = IntoSystem::into_boxed_system(|| SystemResult::Err(anyhow!("whatever")));
+        let skip_system = IntoSystem::into_boxed_system(|| SystemResult::Skipped);
+
+        fn get(ecs: &Ecs, system: &str) -> (Option<LastRun>, Option<LastResult>) {
+            let system = ecs.system_entity(system).unwrap();
+            (system.component(), system.component())
+        }
+
+        let _ = ecs.run_dyn_system(&ok_system);
+        let (last_run, last_result) = get(&ecs, &ok_system.name());
+        assert!(last_run.is_some());
+        assert!(matches!(
+            last_result,
+            Some(LastResult(SystemResult::Ok(())))
+        ));
+
+        let _ = ecs.run_dyn_system(&err_system);
+        let (last_run, last_result) = get(&ecs, &err_system.name());
+        assert!(last_run.is_some());
+        assert!(matches!(
+            last_result,
+            Some(LastResult(SystemResult::Err(_)))
+        ));
+
+        let _ = ecs.run_dyn_system(&skip_system);
+        let (last_run, last_result) = get(&ecs, &skip_system.name());
+        assert!(last_run.is_some());
+        assert!(matches!(
+            last_result,
+            Some(LastResult(SystemResult::Skipped))
+        ));
+    }
+
+    #[test]
     fn non_static_system() {
         let ecs = Ecs::open_in_memory().unwrap();
 
@@ -367,7 +438,7 @@ mod tests {
         #[rustfmt::skip]
         impl<'a> System for NonStaticSystem<'a> {
             fn name(&self) -> std::borrow::Cow<'static, str> { "".into() }
-            fn run_system(&self, _app: &Ecs) -> Result<(), anyhow::Error> { Ok(()) }
+            fn run_system(&self, _app: &Ecs) -> SystemResult { SystemResult::Ok(()) }
         }
 
         let non_static: NonStaticSystem<'_> = NonStaticSystem(PhantomData);
@@ -407,6 +478,7 @@ mod tests {
     }
 
     use crate as ecsdb;
+    use anyhow::anyhow;
     use ecsdb::Component;
     use serde::{Deserialize, Serialize};
 
@@ -466,5 +538,18 @@ mod tests {
         db.run_system(system).unwrap();
 
         assert!(db.query::<Seen, ()>().next().is_some());
+    }
+
+    #[test]
+    fn run_system_skipped_return_value() {
+        let db = Ecs::open_in_memory().unwrap();
+        fn system() -> SystemResult {
+            SystemResult::Skipped
+        }
+
+        assert!(matches!(
+            IntoSystem::into_boxed_system(system).run_system(&db),
+            SystemResult::Skipped
+        ));
     }
 }
