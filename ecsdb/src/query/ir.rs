@@ -243,7 +243,7 @@ impl FilterExpression {
         for expr in exprs {
             let expr = expr.rename_identifier(&mut rename_fn);
             fragment.sql = format!("{} {via} {}", fragment.sql, expr.sql);
-            fragment.placeholders.extend(expr.placeholders.into_iter());
+            fragment.placeholders.extend(expr.placeholders);
         }
 
         fragment.sql = format!("({})", fragment.sql);

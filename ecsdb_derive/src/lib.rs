@@ -2,9 +2,7 @@ extern crate proc_macro;
 
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{
-    Attribute, Data, Expr, ExprLit, Fields, Lit, Meta, Token, parse_quote, punctuated::Punctuated,
-};
+use syn::{Attribute, Data, Expr, Fields, Lit, Meta, Token, parse_quote, punctuated::Punctuated};
 
 #[proc_macro_derive(Component, attributes(component))]
 pub fn derive_component_fn(input: TokenStream) -> TokenStream {
