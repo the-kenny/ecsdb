@@ -105,9 +105,7 @@ struct Archived;
 #[component(name = "app::Priority")]
 struct Priority(u32);
 
-// Recognize old names when reading (for renaming components)
 #[derive(Serialize, Deserialize, Component)]
-#[component(other_names = ["old::Title"])]
 struct Title(String);
 ```
 
