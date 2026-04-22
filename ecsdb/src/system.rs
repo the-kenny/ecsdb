@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error, info, instrument};
+use tracing::{debug, error, info, instrument, warn};
 
 use crate::{self as ecsdb, Component, Ecs, Entity, query};
 
@@ -210,6 +210,10 @@ impl Ecs {
 
         let system_entity = self.get_or_create_system_entity(&system.name());
 
+        if system.name().ends_with("{{closure}}") {
+            warn!("System looks like a closure. Its name may not be unique");
+        }
+
         info!("Running");
 
         if let Err(e) = system.run_system(self) {
@@ -345,6 +349,14 @@ mod tests {
         let system = IntoSystem::into_boxed_system(|| ());
         ecs.run_dyn_system(&system).unwrap();
         ecs.run_dyn_system(system.as_ref()).unwrap();
+    }
+
+    #[test]
+    #[ignore = "closure names not unique"]
+    fn closure_system_names() {
+        let a = IntoSystem::into_boxed_system(|| Ok(()));
+        let b = IntoSystem::into_boxed_system(|| Ok(()));
+        assert_ne!(a.name(), b.name());
     }
 
     #[test]
