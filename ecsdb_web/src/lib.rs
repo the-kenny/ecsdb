@@ -138,9 +138,17 @@ impl Breadcrumb {
         match request {
             Request::Index => (),
             Request::Entities { .. } => (),
+            Request::NewEntityForm => {
+                add(&mut breadcrumbs, "New", &["new"]);
+            }
             Request::Entity(eid) => {
                 let eid = eid.to_string();
                 add(&mut breadcrumbs, &eid, &[&eid]);
+            }
+            Request::AddComponentForm { entity_id } => {
+                let entity_id = entity_id.to_string();
+                add(&mut breadcrumbs, &entity_id, &[&entity_id]);
+                add(&mut breadcrumbs, "Add component", &["add-component"]);
             }
             Request::Component {
                 entity_id,
@@ -150,8 +158,13 @@ impl Breadcrumb {
                 add(&mut breadcrumbs, &entity_id, &[&entity_id]);
                 add(&mut breadcrumbs, component, &["components", component]);
             }
+            Request::CreateEntity { .. } => unreachable!(),
+            Request::CreateComponent { .. } => unreachable!(),
             Request::ModifyComponent { .. } => unreachable!(),
-            Request::DeleteComponent { .. } => unreachable!(),
+            // DELETE is the htmx-only path: it returns a table fragment that is
+            // never wrapped in a full page, so no breadcrumbs are needed.
+            Request::DeleteComponent { .. } => (),
+            Request::DeleteComponentForm { .. } => unreachable!(),
             Request::DownloadComponent { .. } => unreachable!(),
         };
 
@@ -166,7 +179,23 @@ mod pages {
 
     use crate::Breadcrumb;
     pub fn entity(entity: ecsdb::Entity) -> Markup {
+        let add_component_url = format!("entities/{}/add-component", entity.id());
         html!({
+            (components_table(&entity))
+
+            div class="flex-row" {
+                a class="<button>" href=(add_component_url) {
+                    "Add component"
+                }
+            }
+        })
+    }
+
+    /// The components table for an entity. Rendered standalone so that the htmx
+    /// delete action can swap just this table (`hx-target="closest table"`)
+    /// instead of a full page reload.
+    pub fn components_table(entity: &ecsdb::Entity) -> Markup {
+        html! {
             table {
                 thead {
                     tr {
@@ -197,9 +226,13 @@ mod pages {
                                 }
                             }
                             td {
-                                form {
+                                form method="post" action=(format!("{url}/delete")) {
                                     @let confirm = format!("Delete '{name}' from entity {}?", entity.id());
-                                    button hx-delete=(url) hx-confirm=(confirm) hx-target="closest table" {
+                                    button type="submit"
+                                        hx-delete=(url)
+                                        hx-confirm=(confirm)
+                                        hx-target="closest table"
+                                        hx-swap="outerHTML" {
                                         "␡"
                                     }
                                 }
@@ -208,7 +241,80 @@ mod pages {
                     }
                 }
             }
-        })
+        }
+    }
+
+    /// Form for adding a new component to an existing entity. Works as a plain
+    /// HTML form (native POST) and is enhanced by htmx when available.
+    pub fn add_component_form(
+        entity: ecsdb::Entity,
+        all_component_names: &[impl AsRef<str>],
+    ) -> Markup {
+        let action = format!("entities/{}/components", entity.id());
+        html! {
+            h2 { (format!("Add component to {entity}")) }
+            (component_form(&action, None, "{}", all_component_names))
+        }
+    }
+
+    /// Form for creating a brand-new entity by attaching its first component.
+    pub fn new_entity_form(all_component_names: &[impl AsRef<str>]) -> Markup {
+        html! {
+            h2 { "New entity" }
+            p { "A new entity is created by attaching its first component." }
+            (component_form("entities", None, "{}", all_component_names))
+        }
+    }
+
+    /// Shared component name + JSON data form used for adding components and
+    /// creating entities. `name_value` pre-fills the component-name input (when
+    /// `Some`, the field is rendered read-only).
+    fn component_form(
+        action: &str,
+        name_value: Option<&str>,
+        data_value: &str,
+        all_component_names: &[impl AsRef<str>],
+    ) -> Markup {
+        let mut names = all_component_names
+            .iter()
+            .map(AsRef::as_ref)
+            .collect::<Vec<_>>();
+        names.sort();
+        names.dedup();
+
+        let rows = data_value.lines().count().max(8);
+
+        html! {
+            form method="post" action=(action) {
+                div {
+                    label for="component_name_input" { "Component name" }
+                    input id="component_name_input" type="text" name="component_name"
+                        list="known-components"
+                        required
+                        autocomplete="off"
+                        placeholder="my_app::MyComponent"
+                        value=[name_value]
+                        readonly[name_value.is_some()];
+                    datalist id="known-components" {
+                        @for name in &names {
+                            option value=(name) {}
+                        }
+                    }
+                }
+
+                div {
+                    label for="component_data_input" { "Data (JSON)" }
+                    pre {
+                        textarea id="component_data_input" name="component_data"
+                            class="width:100%" rows=(rows) {
+                            (data_value)
+                        }
+                    }
+                }
+
+                input type="submit" value="Save";
+            }
+        }
     }
 
     fn format_time<Tz>(datetime: chrono::DateTime<Tz>) -> maud::Markup
@@ -279,6 +385,10 @@ mod pages {
                     div class="align-self:end" {
                         button type="submit" name="after" value="0" { "Apply "}
                     }
+
+                    div class="align-self:end" {
+                        a class="<button>" href="entities/new" { "New entity" }
+                    }
                 }
             }
 
@@ -327,7 +437,11 @@ mod pages {
                                 (entity.component_names().count()) " Components"
                             }
                             td style="text-align: center" {
+                                // Without JS this is a normal link to the entity
+                                // page; htmx intercepts it to load the entity
+                                // into the popover instead.
                                 a class="<button>"
+                                    href=(format!("entities/{}", entity.id()))
                                     hx-get=(format!("entities/{}", entity.id()))
                                     hx-target=(format!("#{popover_id} > .content"))
                                     hx-swap="innerHTML"

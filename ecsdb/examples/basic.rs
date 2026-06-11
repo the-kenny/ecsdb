@@ -1,4 +1,4 @@
-use ecsdb::{query::Without, Component, Ecs, Entity};
+use ecsdb::{Component, Ecs, Entity, query::Without};
 use serde::{Deserialize, Serialize};
 
 pub fn main() -> Result<(), anyhow::Error> {

@@ -113,7 +113,6 @@ fn test_resource_standalone() {
     assert_eq!(Foo::component_name(), "derive_test::Foo".to_string());
 }
 
-
 // #[test]
 // fn derive_bundle_struct() {
 //     #[derive(Debug, Component)]

@@ -174,7 +174,20 @@ pub enum Request {
     Entities {
         filter: Filter,
     },
+    NewEntityForm,
+    CreateEntity {
+        component: String,
+        value: serde_json::Value,
+    },
     Entity(EntityId),
+    AddComponentForm {
+        entity_id: EntityId,
+    },
+    CreateComponent {
+        entity_id: EntityId,
+        component: String,
+        value: serde_json::Value,
+    },
     Component {
         entity_id: EntityId,
         component: String,
@@ -185,6 +198,12 @@ pub enum Request {
         value: serde_json::Value,
     },
     DeleteComponent {
+        entity_id: EntityId,
+        component: String,
+    },
+    /// No-JS fallback for deleting a component: a plain `POST` form (HTML forms
+    /// cannot issue `DELETE`) that redirects back to the entity page.
+    DeleteComponentForm {
         entity_id: EntityId,
         component: String,
     },
@@ -231,12 +250,40 @@ impl Request {
                 Ok(Self::Entities { filter })
             }
 
+            (&Method::GET, &["entities", "new"]) => Ok(Self::NewEntityForm),
+
+            (&Method::POST, &["entities"]) => {
+                let CreateFormData { component, value } = read_create_form(req).await?;
+                Ok(Self::CreateEntity { component, value })
+            }
+
             (&Method::GET, &["entities", entity_id]) => {
                 let Ok(entity_id) = str::parse::<EntityId>(entity_id) else {
                     return Err(Error::InvalidEntityId(entity_id.into()));
                 };
 
                 Ok(Self::Entity(entity_id))
+            }
+
+            (&Method::GET, &["entities", entity_id, "add-component"]) => {
+                let Ok(entity_id) = str::parse::<EntityId>(entity_id) else {
+                    return Err(Error::InvalidEntityId(entity_id.into()));
+                };
+
+                Ok(Self::AddComponentForm { entity_id })
+            }
+
+            (&Method::POST, &["entities", entity_id, "components"]) => {
+                let Ok(entity_id) = str::parse::<EntityId>(entity_id) else {
+                    return Err(Error::InvalidEntityId(entity_id.into()));
+                };
+
+                let CreateFormData { component, value } = read_create_form(req).await?;
+                Ok(Self::CreateComponent {
+                    entity_id,
+                    component,
+                    value,
+                })
             }
 
             (&Method::GET, &["entities", entity_id, "components", component]) => {
@@ -262,10 +309,15 @@ impl Request {
             }
 
             (&Method::POST, &["entities", entity_id, "components", component]) => {
+                // `serde_urlencoded` decodes every form value as a string, so we
+                // receive `component_data` as the raw JSON *text* and parse it
+                // ourselves. Deserializing the field straight into
+                // `serde_json::Value` would instead wrap the text in a JSON
+                // string (e.g. `{"n":1}` -> `"{\"n\":1}"`), double-quoting it.
                 #[derive(Deserialize)]
                 struct FormData {
                     #[serde(rename = "component_data")]
-                    value: serde_json::Value,
+                    value: String,
                 }
 
                 let Ok(entity_id) = str::parse::<EntityId>(entity_id) else {
@@ -285,11 +337,15 @@ impl Request {
                 });
 
                 match form_data {
-                    Ok(FormData { value }) => Ok(Self::ModifyComponent {
-                        entity_id,
-                        component: component.to_owned(),
-                        value,
-                    }),
+                    Ok(FormData { value }) => {
+                        let value = serde_json::from_str(&value)
+                            .map_err(|e| Error::InvalidComponentData(e.to_string()))?;
+                        Ok(Self::ModifyComponent {
+                            entity_id,
+                            component: component.to_owned(),
+                            value,
+                        })
+                    }
                     Err(e) => Err(Error::InvalidComponentData(e.to_string())),
                 }
             }
@@ -308,6 +364,21 @@ impl Request {
                 Ok(Self::DeleteComponent {
                     entity_id,
                     component,
+                })
+            }
+
+            (&Method::POST, &["entities", entity_id, "components", component, "delete"]) => {
+                let Ok(entity_id) = str::parse::<EntityId>(entity_id) else {
+                    return Err(Error::InvalidEntityId(entity_id.into()));
+                };
+
+                if component.trim().is_empty() {
+                    return Err(Error::InvalidComponentName(component.into()));
+                }
+
+                Ok(Self::DeleteComponentForm {
+                    entity_id,
+                    component: component.to_string(),
                 })
             }
 
@@ -343,6 +414,26 @@ impl Request {
                     &all_component_names,
                 )))
             }
+            Self::NewEntityForm => {
+                let all_component_names = db.component_names()?;
+                Ok(Response::Markup(pages::new_entity_form(
+                    &all_component_names,
+                )))
+            }
+            Self::CreateEntity { component, value } => {
+                let dyn_component = match ecsdb::DynComponent::from_json(component, value) {
+                    Ok(c) => c,
+                    Err(e) => return Err(Error::InvalidComponentData(format!("{e:?}"))),
+                };
+
+                let entity = db.new_entity().dyn_attach(dyn_component);
+                entity.attach(LastAccess::now());
+
+                info!(entity_id = entity.id(), component, "created entity");
+
+                let target = iri::PathBuf::new(format!("entities/{}", entity.id())).unwrap();
+                Ok(Response::Redirect(target))
+            }
             Self::Entity(eid) => {
                 let Some(entity) = db.find(*eid).next() else {
                     return Ok(Response::NotFound);
@@ -350,6 +441,40 @@ impl Request {
 
                 entity.attach(LastAccess::now());
                 Ok(Response::Markup(pages::entity(entity)))
+            }
+            Self::AddComponentForm { entity_id } => {
+                let Some(entity) = db.find(*entity_id).next() else {
+                    return Ok(Response::NotFound);
+                };
+
+                let all_component_names = db.component_names()?;
+                Ok(Response::Markup(pages::add_component_form(
+                    entity,
+                    &all_component_names,
+                )))
+            }
+            Self::CreateComponent {
+                entity_id,
+                component,
+                value,
+            } => {
+                let Some(entity) = db.find(*entity_id).next() else {
+                    return Ok(Response::NotFound);
+                };
+
+                let dyn_component = match ecsdb::DynComponent::from_json(component, value) {
+                    Ok(c) => c,
+                    Err(e) => return Err(Error::InvalidComponentData(format!("{e:?}"))),
+                };
+
+                entity.attach(LastAccess::now()).dyn_attach(dyn_component);
+
+                info!(component, entity_id, "added component");
+
+                let target =
+                    iri::PathBuf::new(format!("entities/{entity_id}/components/{component}"))
+                        .unwrap();
+                Ok(Response::Redirect(target))
             }
             Self::Component {
                 entity_id,
@@ -377,7 +502,7 @@ impl Request {
 
                 let component = match ecsdb::DynComponent::from_json(component, value) {
                     Ok(c) => c,
-                    Err(e) => todo!("{e:?}"),
+                    Err(e) => return Err(Error::InvalidComponentData(format!("{e:?}"))),
                 };
 
                 entity.attach(LastAccess::now()).dyn_attach(component);
@@ -394,8 +519,25 @@ impl Request {
 
                 entity.detach_named(component).attach(LastAccess::now());
 
-                info!(component, entity_id, "detached");
+                info!(component, entity_id, "detached (htmx)");
 
+                // htmx swaps the refreshed components table in place; return
+                // just that fragment instead of redirecting.
+                Ok(Response::Markup(pages::components_table(&entity)))
+            }
+            Self::DeleteComponentForm {
+                entity_id,
+                component,
+            } => {
+                let Some(entity) = db.find(*entity_id).next() else {
+                    return Ok(Response::NotFound);
+                };
+
+                entity.detach_named(component).attach(LastAccess::now());
+
+                info!(component, entity_id, "detached (form)");
+
+                // No-JS path: redirect back to the entity page (POST/redirect/GET).
                 let target = iri::PathBuf::new(format!("entities/{entity_id}")).unwrap();
                 Ok(Response::Redirect(target))
             }
@@ -447,6 +589,59 @@ impl Request {
     }
 }
 
+/// Form payload for creating an entity or adding a component: a component
+/// name plus its JSON data.
+struct CreateFormData {
+    component: String,
+    value: serde_json::Value,
+}
+
+/// Parse a `component_name` + `component_data` urlencoded form body, validating
+/// that the name is non-empty and the data is valid JSON.
+async fn read_create_form<RB>(req: http::Request<RB>) -> Result<CreateFormData, Error>
+where
+    RB: http_body::Body<Data = Bytes> + Unpin,
+    RB::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    // `serde_urlencoded` decodes every form value as a string, so `component_data`
+    // arrives as the raw JSON *text*. Parse it explicitly below rather than
+    // deserializing straight into `serde_json::Value`, which would wrap the text
+    // in a JSON string (e.g. `{"n":1}` -> `"{\"n\":1}"`), double-quoting it.
+    #[derive(Deserialize)]
+    struct FormData {
+        component_name: String,
+        #[serde(rename = "component_data")]
+        value: String,
+    }
+
+    let (_req, body) = req.into_parts();
+
+    let form_data = tokio::task::block_in_place(|| {
+        let byte_stream = body
+            .into_data_stream()
+            .map_err(|e| std::io::Error::other(e.into()));
+
+        let reader = tokio_util::io::StreamReader::new(byte_stream);
+        let sync_reader = tokio_util::io::SyncIoBridge::new(reader);
+        serde_urlencoded::from_reader::<FormData, _>(sync_reader)
+    });
+
+    let FormData {
+        component_name,
+        value,
+    } = form_data.map_err(|e| Error::InvalidComponentData(e.to_string()))?;
+
+    let component = component_name.trim().to_owned();
+    if component.is_empty() {
+        return Err(Error::InvalidComponentName(component));
+    }
+
+    let value =
+        serde_json::from_str(&value).map_err(|e| Error::InvalidComponentData(e.to_string()))?;
+
+    Ok(CreateFormData { component, value })
+}
+
 impl std::fmt::Debug for Response {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -472,7 +667,26 @@ impl std::fmt::Debug for Request {
         match self {
             Self::Index => f.debug_tuple("Index").finish(),
             Self::Entities { filter } => f.debug_tuple("Entities").field(&filter).finish(),
+            Self::NewEntityForm => f.debug_tuple("NewEntityForm").finish(),
+            Self::CreateEntity { component, .. } => f
+                .debug_tuple("CreateEntity")
+                .field(&format_args!("{component}"))
+                .field(&format_args!("<redacted>"))
+                .finish(),
             Self::Entity(eid) => f.debug_tuple("Entity").field(eid).finish(),
+            Self::AddComponentForm { entity_id } => {
+                f.debug_tuple("AddComponentForm").field(entity_id).finish()
+            }
+            Self::CreateComponent {
+                entity_id,
+                component,
+                value: _,
+            } => f
+                .debug_tuple("CreateComponent")
+                .field(entity_id)
+                .field(&format_args!("{component}"))
+                .field(&format_args!("<redacted>"))
+                .finish(),
             Self::Component {
                 entity_id,
                 component,
@@ -496,6 +710,14 @@ impl std::fmt::Debug for Request {
                 component,
             } => f
                 .debug_tuple("DeleteComponent")
+                .field(entity_id)
+                .field(&format_args!("{component}"))
+                .finish(),
+            Self::DeleteComponentForm {
+                entity_id,
+                component,
+            } => f
+                .debug_tuple("DeleteComponentForm")
                 .field(entity_id)
                 .field(&format_args!("{component}"))
                 .finish(),
