@@ -8,12 +8,12 @@ use tracing::{error, info};
 pub async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     tracing_subscriber::fmt::init();
 
-    let addr: SocketAddr = ([127, 0, 0, 1], 3000).into();
+    let addr: SocketAddr = ([127, 0, 0, 1], 0).into();
 
     // Bind to the port and listen for incoming TCP connections
     let listener = TcpListener::bind(addr).await?;
 
-    info!("Listening on http://{}", addr);
+    info!("Listening on http://{}", listener.local_addr()?);
 
     loop {
         let service = ecsdb_web::service("/", |_req: &http::Request<_>| {
