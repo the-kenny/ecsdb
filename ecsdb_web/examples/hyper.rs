@@ -12,7 +12,9 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // Bind to the port and listen for incoming TCP connections
     let listener = TcpListener::bind(addr).await?;
+
     info!("Listening on http://{}", addr);
+
     loop {
         let service = ecsdb_web::service("/", |_req: &http::Request<_>| {
             ecsdb::Ecs::open("scratch/test.sqlite")

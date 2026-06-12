@@ -30,8 +30,10 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .nest_service("/ecsdb", service);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
-    info!("listening on {}", addr);
     let listener = tokio::net::TcpListener::bind(addr).await?;
+
+    info!("server running on http://{}", addr);
+
     axum::serve(listener, app.into_make_service()).await?;
 
     Ok(())
