@@ -61,9 +61,15 @@ where
                 .body(ResponseBody::from(markup.into_string()))
         }
         Response::Redirect(path) => {
-            // Prepend base url to our redirect target
+            // Prepend base url to our redirect target, producing a root-absolute
+            // Location (always starting with '/'). Resolving a *relative*
+            // Location against the request URL would otherwise duplicate path
+            // segments (e.g. mounting at "/" trims to "" and yields a relative
+            // "entities/110/components/..." that the browser resolves against
+            // "/entities/110/components", giving "/entities/110/entities/110/...").
             let base_url_without_trailing_slash = base_url.path().trim_end_matches('/');
-            let mut base = iri::PathBuf::new(base_url_without_trailing_slash.to_owned()).unwrap();
+            let mut base =
+                iri::PathBuf::new(format!("{base_url_without_trailing_slash}/")).unwrap();
             base.symbolic_append(path.segments());
 
             http::Response::builder()
