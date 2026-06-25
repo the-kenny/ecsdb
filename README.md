@@ -411,6 +411,13 @@ if let Some(dyn_comp) = entity.dyn_component("my_app::Score") {
 for name in entity.component_names() {
     println!("{name}");
 }
+
+// Add or overwrite a component by name (upsert) without knowing its type.
+// `dyn_attach` inserts the component if missing and overwrites it otherwise.
+let value = serde_json::json!(100);
+let dyn_comp = DynComponent::from_json(Score::component_name(), &value).unwrap();
+entity.dyn_attach(dyn_comp);
+assert_eq!(entity.component::<Score>().unwrap().0, 100);
 ```
 
 ## Scheduling

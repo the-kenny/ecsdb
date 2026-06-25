@@ -31,6 +31,25 @@ impl<'a, T> GenericEntity<'a, T> {
     pub fn db(&'a self) -> &'a Ecs {
         self.0
     }
+
+    /// Begin a new `IMMEDIATE` transaction on the entity's connection.
+    ///
+    /// # Warning
+    ///
+    /// Callers must ensure no other transaction is live on `self.0.conn` for
+    /// the duration of the returned transaction.
+    ///
+    /// In particular, do not invoke mutating entity methods from inside a
+    /// [`try_modify_component`] closure, or while iterating a query/statement
+    /// that holds the connection in a transaction.
+    ///
+    /// In other words: The function should be pure regarding database access.
+    fn immediate_tx(&self) -> Result<rusqlite::Transaction<'_>, Error> {
+        Ok(rusqlite::Transaction::new_unchecked(
+            &self.0.conn,
+            rusqlite::TransactionBehavior::Immediate,
+        )?)
+    }
 }
 
 impl<'a> Entity<'a> {
@@ -118,10 +137,78 @@ impl<'a> Entity<'a> {
 #[with_infallible]
 impl<'a> Entity<'a> {
     pub fn try_component<T: Component>(self) -> Result<Option<T>, Error> {
+        self.try_component_within(&self.0.conn)
+    }
+}
+
+#[with_infallible]
+impl<'a> Entity<'a> {
+    pub fn try_dyn_component(self, name: &'a str) -> Result<Option<DynComponent<'a>>, Error> {
+        self.try_dyn_component_within(&self.0.conn, name)
+    }
+}
+
+impl<'a> Entity<'a> {
+    /// Upsert a sequence of `(component_name, data)` pairs using the given
+    /// connection (which may be a [`rusqlite::Transaction`]). The component data is inserted or
+    /// overwritten. Unchanged data is a no-op.
+    fn attach_within<I, D>(self, conn: &rusqlite::Connection, components: I) -> Result<(), Error>
+    where
+        I: IntoIterator<Item = (&'a str, D)>,
+        D: rusqlite::ToSql,
+    {
+        let mut query = conn.prepare_cached(
+            r#"
+            insert into components (entity, component, data)
+            values (?2, ?3, ?1)
+            on conflict (entity, component) do update
+            set data = excluded.data where data is not excluded.data
+            "#,
+        )?;
+
+        for (component, data) in components {
+            trace!(params = ?(self.id(), component));
+
+            let attached_rows = query.execute(params![data, self.id(), component])?;
+            if attached_rows > 0 {
+                debug!(entity = self.id(), component, "attached");
+            } else {
+                debug!(entity = self.id(), component, "no-op");
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Delete a sequence of components (by name) from the entity using the
+    /// given connection (which may be a [`rusqlite::Transaction`]).
+    fn detach_within<I>(self, conn: &rusqlite::Connection, components: I) -> Result<(), Error>
+    where
+        I: IntoIterator<Item = &'a str>,
+    {
+        let mut query =
+            conn.prepare_cached("delete from components where entity = ?1 and component = ?2")?;
+
+        for component in components {
+            let deleted_rows = query.execute(params![self.id(), component])?;
+            if deleted_rows > 0 {
+                debug!(entity = self.id(), component, "detached");
+            } else {
+                debug!(entity = self.id(), component, "no-op");
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Read a single typed component using the given connection (which may be
+    /// a [`rusqlite::Transaction`]).
+    fn try_component_within<T: Component>(
+        self,
+        conn: &rusqlite::Connection,
+    ) -> Result<Option<T>, Error> {
         let name = T::component_name();
-        let mut query = self
-            .0
-            .conn
+        let mut query = conn
             .prepare_cached("select data from components where entity = ?1 and component = ?2")?;
 
         query
@@ -134,14 +221,15 @@ impl<'a> Entity<'a> {
             .next()
             .transpose()
     }
-}
 
-#[with_infallible]
-impl<'a> Entity<'a> {
-    pub fn try_dyn_component(self, name: &'a str) -> Result<Option<DynComponent<'a>>, Error> {
-        let mut query = self
-            .0
-            .conn
+    /// Read a single component by name using the given connection (which may be
+    /// a [`rusqlite::Transaction`], since it derefs to [`rusqlite::Connection`]).
+    fn try_dyn_component_within(
+        self,
+        conn: &rusqlite::Connection,
+        name: &'a str,
+    ) -> Result<Option<DynComponent<'a>>, Error> {
+        let mut query = conn
             .prepare_cached("select data from components where entity = ?1 and component = ?2")?;
 
         query
@@ -159,25 +247,23 @@ impl<'a> Entity<'a> {
 
 #[with_infallible]
 impl<'a> Entity<'a> {
+    /// Attach a [`DynComponent`] by name, inserting it if the entity does not
+    /// already have that component and overwriting its data otherwise.
+    #[tracing::instrument(name = "dyn_attach", level = "debug", skip_all)]
     pub fn try_dyn_attach(self, component: DynComponent<'a>) -> Result<Self, Error> {
-        let mut query = self.0.conn.prepare_cached(
-            "update components set data = ?1 where entity = ?2 and component = ?3",
-        )?;
-
-        query.execute(params![component.1, self.id(), component.0])?;
+        let tx = self.immediate_tx()?;
+        self.attach_within(&tx, [(component.0, component.1)])?;
+        tx.commit()?;
         Ok(self)
     }
 }
 
 #[with_infallible]
 impl<'a> Entity<'a> {
-    pub fn try_detach_named(self, component: &str) -> Result<Self, Error> {
-        let mut query = self
-            .0
-            .conn
-            .prepare_cached("delete from components where entity = ?1 and component = ?2")?;
-
-        query.execute(params![self.id(), component])?;
+    pub fn try_detach_named(self, component: &'a str) -> Result<Self, Error> {
+        let tx = self.immediate_tx()?;
+        self.detach_within(&tx, [component])?;
+        tx.commit()?;
         Ok(self)
     }
 }
@@ -191,15 +277,34 @@ impl<'a> Entity<'a> {
         .unwrap()
     }
 
-    // TODO: Race Condition; needs refactoring to make Entity generic over
-    // `rusqlite::Connection` and `rusqlite::Transaction`
+    /// Read-modify-write a single component atomically.
+    ///
+    /// The read, the modification closure, and the write all happen inside a
+    /// single `IMMEDIATE` transaction, so a concurrent writer cannot change
+    /// the component between the read and the write.
+    ///
+    /// # Warning
+    ///
+    /// The closure `f` runs **inside the open transaction**. It must not
+    /// perform any other database mutation on the same [`Ecs`] (e.g.
+    /// `entity.attach(..)`, `entity.modify_component(..)`, `db.new_entity()`),
+    /// as that would try to open a second transaction on a connection that is
+    /// already in one and fail at runtime. Keep `f` to in-memory mutation of
+    /// the passed component only.
     pub fn try_modify_component<C: Component + Default>(
         self,
         f: impl FnOnce(&mut C) -> Result<(), anyhow::Error>,
     ) -> Result<Self, ModifyComponentError> {
-        let mut component = self.try_component()?.unwrap_or_default();
+        let tx = self.immediate_tx()?;
+
+        let mut component = self.try_component_within(&tx)?.unwrap_or_default();
         f(&mut component).map_err(ModifyComponentError::Fn)?;
-        Ok(self.try_attach(component)?)
+
+        let data = C::to_rusqlite(&component).map_err(Error::from)?;
+        self.attach_within(&tx, [(C::component_name(), data)])?;
+
+        tx.commit().map_err(Error::from)?;
+        Ok(self)
     }
 }
 
@@ -223,50 +328,28 @@ impl<'a> Entity<'a> {
 impl<'a> Entity<'a> {
     #[tracing::instrument(name = "attach", level = "debug", skip_all)]
     pub fn try_attach<B: Bundle>(self, component: B) -> Result<Self, Error> {
-        let components = B::to_rusqlite(&component)?;
-
-        let mut stmt = self.0.conn.prepare_cached(
-            r#"
-            insert into components (entity, component, data)
-            values (?1, ?2, ?3)
-            on conflict (entity, component) do update
-            set data = excluded.data where data is not excluded.data;
-            "#,
-        )?;
-
-        for (component, data) in components {
-            trace!(params = ?(self.id(), component, &data));
-
-            if let Some(data) = data {
-                let attached_rows = stmt.execute(params![self.id(), component, data])?;
-                if attached_rows > 0 {
-                    debug!(entity = self.id(), component, "attached");
-                } else {
-                    debug!(entity = self.id(), component, "no-op")
+        let components = B::to_rusqlite(&component)?
+            .into_iter()
+            .filter_map(|(component, data)| match data {
+                Some(data) => Some((component, data)),
+                None => {
+                    debug!(component, "skipping None");
+                    None
                 }
-            } else {
-                debug!(component, ?data, "skipping None");
-            }
-        }
+            });
+
+        let tx = self.immediate_tx()?;
+        self.attach_within(&tx, components)?;
+        tx.commit()?;
 
         Ok(self)
     }
 
     #[tracing::instrument(name = "detach", level = "debug")]
     pub fn try_detach<B: Bundle>(self) -> Result<Self, Error> {
-        let mut stmt = self
-            .0
-            .conn
-            .prepare_cached("delete from components where entity = ?1 and component = ?2")?;
-
-        for component in B::COMPONENTS {
-            let deleted_rows = stmt.execute(params![self.id(), component])?;
-            if deleted_rows > 0 {
-                debug!(entity = self.id(), component, "detached");
-            } else {
-                debug!(entity = self.id(), component, "no-op")
-            }
-        }
+        let tx = self.immediate_tx()?;
+        self.detach_within(&tx, B::COMPONENTS.iter().copied())?;
+        tx.commit()?;
 
         Ok(self)
     }
@@ -291,16 +374,28 @@ impl<'a> Entity<'a> {
     }
 }
 
-#[with_infallible]
+/// Connection/transaction-scoped helpers shared by the public `NewEntity` API.
+/// These take an explicit connection (typically a transaction) so the id
+/// allocation and all component inserts happen atomically.
 impl<'a> NewEntity<'a> {
-    #[tracing::instrument(name = "attach", level = "debug", skip_all)]
-    pub fn try_attach<B: NonEmptyBundle>(
+    /// Insert a sequence of `(component_name, data)` pairs for a brand new
+    /// entity using the given connection (which may be a
+    /// [`rusqlite::Transaction`], since it derefs to [`rusqlite::Connection`]),
+    /// allocating the entity id on the first inserted row and threading it into
+    /// the remaining rows. Returns the allocated [`EntityId`].
+    ///
+    /// Panics if the iterator yields no rows, as a new entity must have at
+    /// least one component to exist.
+    fn attach_new_within<I, D>(
         self,
-        bundle: B,
-    ) -> Result<GenericEntity<'a, WithEntityId>, Error> {
-        let data = B::to_rusqlite(&bundle)?;
-
-        let mut stmt = self.0.conn.prepare_cached(
+        conn: &rusqlite::Connection,
+        components: I,
+    ) -> Result<EntityId, Error>
+    where
+        I: IntoIterator<Item = (&'a str, D)>,
+        D: rusqlite::ToSql,
+    {
+        let mut stmt = conn.prepare_cached(
             r#"
             insert into components (entity, component, data)
             values ((select coalesce(?1, max(entity)+1, 100) from components), ?2, ?3)
@@ -310,27 +405,61 @@ impl<'a> NewEntity<'a> {
         )?;
 
         let mut eid = None;
-        for (component, data) in data {
-            trace!(params = ?(eid, component, &data));
+        for (component, data) in components {
+            trace!(params = ?(eid, component));
 
-            if let Some(data) = data {
-                eid = Some(stmt.query_row(params![eid, component, data], |row| {
-                    row.get::<_, EntityId>("entity")
-                })?);
+            eid = Some(stmt.query_row(params![eid, component, data], |row| {
+                row.get::<_, EntityId>("entity")
+            })?);
 
-                debug!(entity = eid.unwrap(), component, "attached");
-            } else {
-                debug!(component, ?data, "skipping None");
-            }
+            debug!(entity = eid.unwrap(), component, "attached");
         }
 
         let Some(eid) = eid else {
-            panic!("Bundle::to_rusqlite returned zero rows. That shouldn't happen.")
+            panic!("attach_new_within was called with zero rows. That shouldn't happen.")
         };
 
-        let entity = GenericEntity(self.0, WithEntityId(eid));
+        Ok(eid)
+    }
+}
 
-        Ok(entity)
+#[with_infallible]
+impl<'a> NewEntity<'a> {
+    #[tracing::instrument(name = "attach", level = "debug", skip_all)]
+    pub fn try_attach<B: NonEmptyBundle>(
+        self,
+        bundle: B,
+    ) -> Result<GenericEntity<'a, WithEntityId>, Error> {
+        let components = B::to_rusqlite(&bundle)?
+            .into_iter()
+            .filter_map(|(component, data)| match data {
+                Some(data) => Some((component, data)),
+                None => {
+                    debug!(component, "skipping None");
+                    None
+                }
+            });
+
+        let tx = self.immediate_tx()?;
+        let eid = self.attach_new_within(&tx, components)?;
+        tx.commit()?;
+
+        Ok(GenericEntity(self.0, WithEntityId(eid)))
+    }
+
+    /// Create a new entity from a single [`DynComponent`], returning the new
+    /// [`Entity`]. This is the dynamic (string-name) counterpart to
+    /// [`try_attach`](Self::try_attach).
+    #[tracing::instrument(name = "dyn_attach", level = "debug", skip_all)]
+    pub fn try_dyn_attach(
+        self,
+        component: DynComponent<'a>,
+    ) -> Result<GenericEntity<'a, WithEntityId>, Error> {
+        let tx = self.immediate_tx()?;
+        let eid = self.attach_new_within(&tx, [(component.0, component.1)])?;
+        tx.commit()?;
+
+        Ok(GenericEntity(self.0, WithEntityId(eid)))
     }
 
     #[tracing::instrument(name = "detach", level = "debug", skip_all)]
@@ -353,8 +482,8 @@ impl<'a> NewEntity<'a> {
         .unwrap()
     }
 
-    // TODO: Race Condition; needs refactoring to make Entity generic over
-    // `rusqlite::Connection` and `rusqlite::Transaction`
+    /// A new entity has no existing component to read, so this starts from
+    /// `C::default()` and attaches. No read-modify-write race exists here.
     pub fn try_modify_component<C: Component + Default>(
         self,
         f: impl FnOnce(&mut C) -> Result<(), anyhow::Error>,
