@@ -126,6 +126,17 @@ impl<S, E> From<Result<S, E>> for SystemResult<S, E> {
     }
 }
 
+impl<S, E> From<Result<std::ops::ControlFlow<(), S>, E>> for SystemResult<S, E> {
+    fn from(value: Result<std::ops::ControlFlow<(), S>, E>) -> Self {
+        use std::ops::ControlFlow;
+        match value {
+            Ok(ControlFlow::Continue(v)) => Self::Ok(v),
+            Ok(ControlFlow::Break(())) => Self::Skipped,
+            Err(e) => Self::Err(e),
+        }
+    }
+}
+
 pub trait SystemOutput {
     fn into_result(self) -> SystemResult;
 }
@@ -145,6 +156,12 @@ impl SystemOutput for SystemResult {
 impl SystemOutput for Result<(), anyhow::Error> {
     fn into_result(self) -> SystemResult {
         SystemResult::from(self)
+    }
+}
+
+impl<E: Into<anyhow::Error>> SystemOutput for Result<std::ops::ControlFlow<(), ()>, E> {
+    fn into_result(self) -> SystemResult {
+        SystemResult::from(self.map_err(Into::into))
     }
 }
 
@@ -551,5 +568,28 @@ mod tests {
             IntoSystem::into_boxed_system(system).run_system(&db),
             SystemResult::Skipped
         ));
+    }
+
+    #[test]
+    fn control_flow_into_system_result() {
+        use std::ops::ControlFlow;
+
+        let cont: Result<ControlFlow<(), i32>, String> = Ok(ControlFlow::Continue(42));
+        assert_eq!(
+            SystemResult::<i32, String>::from(cont),
+            SystemResult::Ok(42)
+        );
+
+        let brk: Result<ControlFlow<(), i32>, String> = Ok(ControlFlow::Break(()));
+        assert_eq!(
+            SystemResult::<i32, String>::from(brk),
+            SystemResult::Skipped
+        );
+
+        let err: Result<ControlFlow<(), i32>, String> = Err("boom".to_string());
+        assert_eq!(
+            SystemResult::<i32, String>::from(err),
+            SystemResult::Err("boom".to_string())
+        );
     }
 }

@@ -256,14 +256,22 @@ impl SchedulingMode for After {
         );
 
         match (predecessor_last_run, predecessor_last_result, our_last_run) {
+            // Predecessor never ran: nothing to run after.
             (None, _, _) => false,
-            (Some(_), None, None) => false,
-            (Some(_), Some(LastResult(SystemResult::Err(_) | SystemResult::Skipped)), None) => {
+            // Predecessor ran but did not succeed: do not run after it.
+            (Some(_), None | Some(LastResult(SystemResult::Err(_) | SystemResult::Skipped)), _) => {
                 false
             }
-            (Some(_), _, None) => true,
-            (Some(LastRun(before)), _, Some(LastRun(after))) if before > after => true,
-            (Some(_), _, Some(_)) => false,
+            // Predecessor succeeded and we have never run: run.
+            (Some(_), Some(LastResult(SystemResult::Ok(_))), None) => true,
+            // Predecessor succeeded again after our last run: run again.
+            (
+                Some(LastRun(predecessor_run)),
+                Some(LastResult(SystemResult::Ok(_))),
+                Some(LastRun(our_run)),
+            ) if predecessor_run > our_run => true,
+            // Predecessor's successful run is not newer than ours: already up to date.
+            (Some(_), Some(LastResult(SystemResult::Ok(_))), Some(_)) => false,
         }
     }
 }
@@ -347,5 +355,56 @@ mod test {
 
         // Third system should be skipped due to Manually scheduling
         assert!(matches!(results[2].1, TickResult::NotScheduled));
+    }
+
+    #[test]
+    fn after_does_not_run_when_predecessor_fails() {
+        #[rustfmt::skip]
+        fn predecessor(_sys: SystemEntity<'_>) -> Result<(), anyhow::Error> { Err(anyhow::anyhow!("Expected test error")) }
+        #[rustfmt::skip]
+        fn dependent(sys: SystemEntity<'_>) { sys.modify_component(|Count(c)| *c += 1); }
+
+        let mut schedule = Schedule::new();
+        schedule.add(predecessor, Always);
+        schedule.add(dependent, After::system(predecessor));
+
+        let ecs = Ecs::open_in_memory().unwrap();
+        schedule.tick(&ecs).unwrap();
+        schedule.tick(&ecs).unwrap();
+
+        // Predecessor keeps failing, so `dependent` must never run.
+        assert_eq!(
+            ecs.system_entity(&system_name(dependent))
+                .and_then(|e| e.component::<Count>()),
+            None
+        );
+    }
+
+    #[test]
+    fn after_runs_once_per_successful_predecessor_run() {
+        #[rustfmt::skip]
+        fn predecessor(_sys: SystemEntity<'_>) {}
+        #[rustfmt::skip]
+        fn dependent(sys: SystemEntity<'_>) { sys.modify_component(|Count(c)| *c += 1); }
+
+        let mut schedule = Schedule::new();
+        schedule.add(predecessor, Always);
+        schedule.add(dependent, After::system(predecessor));
+
+        let ecs = Ecs::open_in_memory().unwrap();
+
+        fn dependent_count(ecs: &Ecs) -> Count {
+            ecs.system_entity(&system_name(dependent))
+                .unwrap()
+                .component()
+                .unwrap()
+        }
+
+        // Predecessor runs every tick; dependent should run once after each.
+        schedule.tick(&ecs).unwrap();
+        assert_eq!(dependent_count(&ecs), Count(1));
+
+        schedule.tick(&ecs).unwrap();
+        assert_eq!(dependent_count(&ecs), Count(2));
     }
 }
