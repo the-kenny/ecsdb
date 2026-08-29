@@ -256,24 +256,27 @@ impl Ecs {
 
         let result = system.run_system(self);
 
-        system_entity.attach(LastRun(chrono::Utc::now()));
-
         debug!(elapsed_ms = started.elapsed().as_millis(), "Finished");
 
         match result {
             SystemResult::Ok(v) => {
-                system_entity.attach(LastResult(SystemResult::Ok(v)));
+                system_entity
+                    .attach((LastRun(chrono::Utc::now()), LastResult(SystemResult::Ok(v))));
                 Ok(())
             }
             SystemResult::Err(error) => {
                 error!(%error);
-                system_entity.attach(LastResult(SystemResult::Err(error.to_string())));
+                system_entity.attach((
+                    LastRun(chrono::Utc::now()),
+                    LastResult(SystemResult::Err(error.to_string())),
+                ));
                 Err(error)
             }
-            SystemResult::Skipped => {
-                system_entity.attach(LastResult(SystemResult::Skipped));
-                Ok(())
-            }
+            // Skipped systems did no work: leave `LastRun`/`LastResult`
+            // untouched so idle ticks cause no database writes. Note that
+            // `Once`/`Every` scheduling therefore treats a skipped system as
+            // not having run and will re-schedule it.
+            SystemResult::Skipped => Ok(()),
         }
     }
 
@@ -422,6 +425,15 @@ mod tests {
             (system.component(), system.component())
         }
 
+        // Note: all three closures share the same `{{closure}}` system name
+        // (and thus the same system entity), so the skip case must run first.
+
+        // Skipped systems must not write any bookkeeping components.
+        let _ = ecs.run_dyn_system(&skip_system);
+        let (last_run, last_result) = get(&ecs, &skip_system.name());
+        assert!(last_run.is_none());
+        assert!(last_result.is_none());
+
         let _ = ecs.run_dyn_system(&ok_system);
         let (last_run, last_result) = get(&ecs, &ok_system.name());
         assert!(last_run.is_some());
@@ -437,13 +449,47 @@ mod tests {
             last_result,
             Some(LastResult(SystemResult::Err(_)))
         ));
+    }
 
-        let _ = ecs.run_dyn_system(&skip_system);
-        let (last_run, last_result) = get(&ecs, &skip_system.name());
-        assert!(last_run.is_some());
+    #[test]
+    fn run_dyn_system_skip_preserves_previous_result() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        static SKIP: AtomicBool = AtomicBool::new(false);
+
+        struct ToggleSystem;
+        impl System for ToggleSystem {
+            fn name(&self) -> std::borrow::Cow<'static, str> {
+                "toggle_system".into()
+            }
+            fn run_system(&self, _app: &Ecs) -> SystemResult {
+                if SKIP.load(Ordering::SeqCst) {
+                    SystemResult::Skipped
+                } else {
+                    SystemResult::Ok(())
+                }
+            }
+        }
+
+        let ecs = Ecs::open_in_memory().unwrap();
+
+        SKIP.store(false, Ordering::SeqCst);
+        ecs.run_dyn_system(&ToggleSystem).unwrap();
+        let entity = ecs.system_entity("toggle_system").unwrap();
+        let last_run = entity.component::<LastRun>().unwrap();
         assert!(matches!(
-            last_result,
-            Some(LastResult(SystemResult::Skipped))
+            entity.component::<LastResult>(),
+            Some(LastResult(SystemResult::Ok(())))
+        ));
+
+        // A subsequent skipped run keeps the previous LastRun/LastResult.
+        SKIP.store(true, Ordering::SeqCst);
+        ecs.run_dyn_system(&ToggleSystem).unwrap();
+        let entity = ecs.system_entity("toggle_system").unwrap();
+        assert_eq!(entity.component::<LastRun>().unwrap().0, last_run.0);
+        assert!(matches!(
+            entity.component::<LastResult>(),
+            Some(LastResult(SystemResult::Ok(())))
         ));
     }
 
