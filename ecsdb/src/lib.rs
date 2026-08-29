@@ -78,6 +78,10 @@ impl Ecs {
 
     pub fn from_rusqlite(mut conn: rusqlite::Connection) -> Result<Self, Error> {
         conn.pragma_update(None, "journal_mode", "wal")?;
+        // NORMAL is sufficient under WAL: commits don't fsync (only
+        // checkpoints do), which avoids periodic write bursts. A power loss
+        // may drop the most recent commits but never corrupts the database.
+        conn.pragma_update(None, "synchronous", "normal")?;
 
         // Migrate resources table to components on the world entity
         let has_resources: bool = conn
