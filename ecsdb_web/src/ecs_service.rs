@@ -70,7 +70,8 @@ where
             let base_url_without_trailing_slash = base_url.path().trim_end_matches('/');
             let mut base =
                 iri::PathBuf::new(format!("{base_url_without_trailing_slash}/")).unwrap();
-            base.symbolic_append(path.segments());
+            // `append` applies `.`/`..` semantics (was `symbolic_append` in iref 3).
+            base.append(path.segments());
 
             http::Response::builder()
                 .status(StatusCode::SEE_OTHER)

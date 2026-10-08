@@ -114,7 +114,7 @@ impl Breadcrumb {
     fn from_request(request: &Request) -> Vec<Breadcrumb> {
         let mut breadcrumbs = vec![Breadcrumb {
             title: "Entities".into(),
-            path: Some(iri::PathBuf::new("entities".into()).expect("Valid iri::PathBuf")),
+            path: Some(iri::PathBuf::new("entities".to_string()).expect("Valid iri::PathBuf")),
         }];
 
         fn add(breadcrumbs: &mut Vec<Breadcrumb>, title: &str, subpath: &[&str]) {
@@ -127,7 +127,8 @@ impl Breadcrumb {
             path.normalize();
 
             for element in subpath {
-                path.symbolic_push(iri::Segment::new(element).expect("Valid iri::Segment"));
+                // `push` applies `.`/`..` semantics (was `symbolic_push` in iref 3).
+                path.push(iri::Segment::new(element).expect("Valid iri::Segment"));
             }
             breadcrumbs.push(Breadcrumb {
                 title: title.into(),
