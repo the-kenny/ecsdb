@@ -57,20 +57,8 @@ pub fn main() -> Result<(), anyhow::Error> {
             .auto_add_history(true)
             .build();
 
-        let history = if let Some(config_dir) = dirs::data_dir() {
-            rustyline::sqlite_history::SQLiteHistory::open(
-                &config,
-                &config_dir.join("ecsdb_history.sqlite3"),
-            )?
-        } else {
-            warn!("Couldn't retrieve data directory. History will not be persisted.");
-            rustyline::sqlite_history::SQLiteHistory::with_config(&config)?
-        };
-
-        let mut rl = rustyline::Editor::<
-            CompletionHandler,
-            rustyline::sqlite_history::SQLiteHistory,
-        >::with_history(config, history)?;
+        let history = rustyline::history::DefaultHistory::new();
+        let mut rl = rustyline::Editor::<CompletionHandler, _>::with_history(config, history)?;
 
         let hinter = CompletionHandler { commands: COMMANDS };
         rl.set_helper(Some(hinter));

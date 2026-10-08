@@ -62,7 +62,7 @@ fn infallible_compantion(item: &syn::ImplItem) -> Option<syn::ImplItem> {
     let sig = &f.sig;
     if sig.asyncness.is_some()
         || sig.constness.is_some()
-        || sig.unsafety.is_some()
+        || matches!(sig.safety, syn::Safety::Unsafe(_))
         || sig.abi.is_some()
     {
         return None;

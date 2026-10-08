@@ -265,7 +265,7 @@ impl<C: Component> QueryFilterValue for C {
         use rusqlite::types::ToSqlOutput;
 
         let value = match C::to_rusqlite(self).unwrap() {
-            ToSqlOutput::Borrowed(v) => v.to_owned().into(),
+            ToSqlOutput::Borrowed(v) => v.to_owned().try_into().expect("ValueRef -> Value"),
             ToSqlOutput::Owned(v) => v,
             other => unreachable!("{other:?}"),
         };
@@ -279,13 +279,13 @@ impl<C: QueryFilterValue + Component> QueryFilterValue for std::ops::Range<C> {
         use rusqlite::types::ToSqlOutput;
 
         let start = match C::to_rusqlite(&self.start).unwrap() {
-            ToSqlOutput::Borrowed(v) => v.to_owned().into(),
+            ToSqlOutput::Borrowed(v) => v.to_owned().try_into().expect("ValueRef -> Value"),
             ToSqlOutput::Owned(v) => v,
             other => unreachable!("{other:?}"),
         };
 
         let end = match C::to_rusqlite(&self.end).unwrap() {
-            ToSqlOutput::Borrowed(v) => v.to_owned().into(),
+            ToSqlOutput::Borrowed(v) => v.to_owned().try_into().expect("ValueRef -> Value"),
             ToSqlOutput::Owned(v) => v,
             other => unreachable!("{other:?}"),
         };
@@ -303,7 +303,7 @@ impl<C: QueryFilterValue + Component> QueryFilterValue for std::ops::RangeTo<C> 
         use rusqlite::types::ToSqlOutput;
 
         let end = match C::to_rusqlite(&self.end).unwrap() {
-            ToSqlOutput::Borrowed(v) => v.to_owned().into(),
+            ToSqlOutput::Borrowed(v) => v.to_owned().try_into().expect("ValueRef -> Value"),
             ToSqlOutput::Owned(v) => v,
             other => unreachable!("{other:?}"),
         };
@@ -321,7 +321,7 @@ impl<C: QueryFilterValue + Component> QueryFilterValue for std::ops::RangeFrom<C
         use rusqlite::types::ToSqlOutput;
 
         let start = match C::to_rusqlite(&self.start).unwrap() {
-            ToSqlOutput::Borrowed(v) => v.to_owned().into(),
+            ToSqlOutput::Borrowed(v) => v.to_owned().try_into().expect("ValueRef -> Value"),
             ToSqlOutput::Owned(v) => v,
             other => unreachable!("{other:?}"),
         };

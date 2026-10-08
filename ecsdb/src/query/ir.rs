@@ -493,7 +493,8 @@ impl<T: std::fmt::Debug> std::fmt::Debug for SqlFragment<T> {
                     .map(|(p, v)| {
                         use rusqlite::types::{ToSqlOutput, Value};
                         let v: Value = match v.to_sql().unwrap() {
-                            ToSqlOutput::Borrowed(v) => Value::from(v),
+                            ToSqlOutput::Borrowed(v) => Value::try_from(v)
+                                .unwrap_or_else(|e| Value::Text(format!("conversion_error: {e}"))),
                             ToSqlOutput::Owned(v) => v,
                             other => unreachable!("Unexpected ToSqlOutput {other:?}"),
                         };
