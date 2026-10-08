@@ -1,0 +1,10 @@
+---
+source: ecsdb/src/query/ir.rs
+description: "WithComponentData(\"ecsdb::Test\", Text(\"x\")).simplify()"
+---
+WithComponentData(
+    "ecsdb::Test",
+    Text(
+        "x",
+    ),
+)

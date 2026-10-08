@@ -1,0 +1,17 @@
+---
+source: ecsdb/src/query/ir.rs
+description: "And([WithoutComponent(\"ecsdb::C\"), WithComponentData(\"ecsdb::B\", Integer(7))]).simplify()"
+---
+And(
+    [
+        WithoutComponent(
+            "ecsdb::C",
+        ),
+        WithComponentData(
+            "ecsdb::B",
+            Integer(
+                7,
+            ),
+        ),
+    ],
+)

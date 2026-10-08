@@ -641,6 +641,36 @@ mod tests {
         );
     }
 
+    /// `AnyOf` is emitted as `component in (...)`, which yields one index row
+    /// per matching component; an entity carrying several must appear once.
+    #[test]
+    fn query_any_of_is_distinct() {
+        let db = Ecs::open_in_memory().unwrap();
+        let ab = db.new_entity().attach(A).attach(B).id();
+        let b = db.new_entity().attach(B).id();
+        let abc = db.new_entity().attach(A).attach(B).attach(C).id();
+
+        assert_eq!(
+            db.query::<EntityId, AnyOf<(A, B)>>().collect::<Vec<_>>(),
+            vec![ab, b, abc]
+        );
+        assert_eq!(
+            db.query::<EntityId, (AnyOf<(A, B)>, Without<C>)>()
+                .collect::<Vec<_>>(),
+            vec![ab, b]
+        );
+        assert_eq!(
+            db.query::<EntityId, (C, AnyOf<(A, B)>)>()
+                .collect::<Vec<_>>(),
+            vec![abc]
+        );
+        assert_eq!(
+            db.query::<EntityId, Or<(With<A>, With<B>, With<C>)>>()
+                .collect::<Vec<_>>(),
+            vec![ab, b, abc]
+        );
+    }
+
     #[test]
     fn query_filtered() {
         let db = Ecs::open_in_memory().unwrap();

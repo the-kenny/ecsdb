@@ -1,0 +1,14 @@
+---
+source: ecsdb/src/query/ir.rs
+description: "Or([WithComponent(\"ecsdb::A\"), WithComponent(\"ecsdb::B\")]).simplify()"
+---
+Or(
+    [
+        WithComponent(
+            "ecsdb::A",
+        ),
+        WithComponent(
+            "ecsdb::B",
+        ),
+    ],
+)

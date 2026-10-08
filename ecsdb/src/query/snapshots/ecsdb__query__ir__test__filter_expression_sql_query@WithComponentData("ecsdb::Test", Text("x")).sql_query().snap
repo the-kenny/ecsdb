@@ -1,9 +1,9 @@
 ---
 source: ecsdb/src/query/ir.rs
-description: "And([WithComponent(\"ecsdb::Test\"), EntityId(42), WithComponent(\"ecsdb::Test\"), EntityId(42)]).simplify().sql_query()"
+description: "WithComponentData(\"ecsdb::Test\", Text(\"x\")).sql_query()"
 ---
 SqlFragment<ecsdb::query::ir::Select> {
-    sql: "select entity from components where (component = :1 and entity = :2)",
+    sql: "select entity from components where (component = :1 and data = :2)",
     placeholders: [
         (
             ":1",
@@ -13,8 +13,8 @@ SqlFragment<ecsdb::query::ir::Select> {
         ),
         (
             ":2",
-            Integer(
-                42,
+            Text(
+                "x",
             ),
         ),
     ],

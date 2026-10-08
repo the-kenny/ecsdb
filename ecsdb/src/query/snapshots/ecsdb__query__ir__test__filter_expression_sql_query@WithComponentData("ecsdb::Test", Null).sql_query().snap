@@ -1,9 +1,9 @@
 ---
 source: ecsdb/src/query/ir.rs
-description: "WithComponent(\"ecsdb::Test\").simplify().sql_query()"
+description: "WithComponentData(\"ecsdb::Test\", Null).sql_query()"
 ---
 SqlFragment<ecsdb::query::ir::Select> {
-    sql: "select entity from components where (component = :1)",
+    sql: "select entity from components where (component = :1 and data is null)",
     placeholders: [
         (
             ":1",

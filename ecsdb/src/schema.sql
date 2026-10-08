@@ -7,7 +7,11 @@ create table if not exists components (
 
 create unique index if not exists components_entity_component_unqiue_idx on components (entity, component);
 
-create index if not exists components_component_idx on components (component);
+-- Covering index for queries anchored on `component = ?` / `component in (...)`
+-- (see query/ir.rs). Supersedes the old single-column `components_component_idx`.
+drop index if exists components_component_idx;
+
+create index if not exists components_component_entity_idx on components (component, entity);
 
 create view if not exists entity_components (entity, components) as
 select

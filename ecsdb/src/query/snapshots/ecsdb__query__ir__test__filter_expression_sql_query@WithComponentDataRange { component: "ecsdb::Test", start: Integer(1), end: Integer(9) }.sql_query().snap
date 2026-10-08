@@ -1,0 +1,27 @@
+---
+source: ecsdb/src/query/ir.rs
+description: "WithComponentDataRange { component: \"ecsdb::Test\", start: Integer(1), end: Integer(9) }.sql_query()"
+---
+SqlFragment<ecsdb::query::ir::Select> {
+    sql: "select entity from components where (component = :3 and velodb_extract_data(data) between velodb_extract_data(:1) and velodb_extract_data(:2))",
+    placeholders: [
+        (
+            ":1",
+            Integer(
+                1,
+            ),
+        ),
+        (
+            ":2",
+            Integer(
+                9,
+            ),
+        ),
+        (
+            ":3",
+            Text(
+                "ecsdb::Test",
+            ),
+        ),
+    ],
+}

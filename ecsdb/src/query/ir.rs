@@ -21,6 +21,7 @@ pub struct Query {
 
 pub(crate) type Sql = String;
 pub(crate) type SqlParameters = Vec<(String, Box<dyn ToSql>)>;
+type StaticPlaceholders = Vec<(&'static str, Box<dyn ToSql>)>;
 
 impl Query {
     pub(crate) fn into_sql(self) -> (Sql, SqlParameters) {
@@ -135,18 +136,193 @@ impl FilterExpression {
     }
 }
 
+/// A filter that can drive the outer scan of a query directly via the
+/// covering `(component, entity)` index instead of a correlated subquery.
+struct Anchor {
+    fragment: SqlFragment<Where>,
+    /// `component in (...)` can yield the same entity once per matching
+    /// component, so the outer select needs `distinct`. Single-component
+    /// anchors never do because `(entity, component)` is unique.
+    distinct: bool,
+}
+
 impl FilterExpression {
+    /// Builds `select entity from components where ...`.
+    ///
+    /// If the (simplified) expression is a leaf or a top-level `And` that
+    /// contains an anchorable filter (`WithComponent`, `WithComponentData`,
+    /// `WithComponentDataRange`, or an `Or` consisting solely of
+    /// `WithComponent`), that filter is emitted as a plain predicate on the
+    /// outer `components` row so SQLite can seek the `(component, entity)`
+    /// index. All remaining filters keep their correlated-subquery form.
+    /// Without an anchor the query degrades to a full scan over `components`.
     fn sql_query(&self) -> SqlFragment<Select> {
-        let filter = self.where_clause();
-        let sql = format!(
-            "select distinct entity from components where {}",
-            filter.sql
-        );
+        let candidates: &[FilterExpression] = match self {
+            FilterExpression::And(exprs) => exprs,
+            other => std::slice::from_ref(other),
+        };
+
+        // Most selective first.
+        let priorities: [fn(&FilterExpression) -> bool; 4] = [
+            |e| matches!(e, FilterExpression::WithComponentData(..)),
+            |e| matches!(e, FilterExpression::WithComponentDataRange { .. }),
+            |e| matches!(e, FilterExpression::WithComponent(_)),
+            |e| e.is_component_in_list(),
+        ];
+
+        let anchor_idx = priorities
+            .iter()
+            .find_map(|is_anchor| candidates.iter().position(is_anchor));
+
+        let Some(anchor_idx) = anchor_idx else {
+            let filter = self.where_clause();
+            return SqlFragment {
+                kind: PhantomData,
+                sql: format!(
+                    "select distinct entity from components where {}",
+                    filter.sql
+                ),
+                placeholders: filter.placeholders,
+            };
+        };
+
+        let anchor = candidates[anchor_idx]
+            .anchor()
+            .expect("anchor predicate matched a non-anchorable expression");
+
+        let remaining = candidates
+            .iter()
+            .enumerate()
+            .filter(|(idx, _)| *idx != anchor_idx)
+            .map(|(_, expr)| expr.where_clause());
+
+        let filter =
+            Self::combine_fragments("and", std::iter::once(anchor.fragment).chain(remaining));
+
+        let distinct = if anchor.distinct { "distinct " } else { "" };
 
         SqlFragment {
             kind: PhantomData,
-            sql,
+            sql: format!(
+                "select {distinct}entity from components where {}",
+                filter.sql
+            ),
             placeholders: filter.placeholders,
+        }
+    }
+
+    /// `Or` whose children are all `WithComponent` → `component in (...)`.
+    fn is_component_in_list(&self) -> bool {
+        match self {
+            FilterExpression::Or(exprs) => {
+                !exprs.is_empty()
+                    && exprs
+                        .iter()
+                        .all(|e| matches!(e, FilterExpression::WithComponent(_)))
+            }
+            _ => false,
+        }
+    }
+
+    fn anchor(&self) -> Option<Anchor> {
+        use rusqlite::types::Value;
+
+        let fragment = match self {
+            FilterExpression::WithComponent(c) => {
+                SqlFragment::new("component = ?1", [("?1", Box::new(c.to_owned()) as _)])
+            }
+
+            FilterExpression::WithComponentData(component, Value::Null) => SqlFragment::new(
+                "component = ?1 and data is null",
+                [("?1", Box::new(component.to_owned()) as _)],
+            ),
+
+            FilterExpression::WithComponentData(component, data) => SqlFragment::new(
+                "component = ?1 and data = ?2",
+                [
+                    ("?1", Box::new(component.to_owned()) as _),
+                    ("?2", Box::new(data.to_owned()) as _),
+                ],
+            ),
+
+            FilterExpression::WithComponentDataRange {
+                component,
+                start,
+                end,
+            } => {
+                let (range_filter_condition, mut params) =
+                    Self::range_condition("data", start, end);
+                params.push(("?component", Box::new(component.to_owned()) as _));
+                SqlFragment::new(
+                    &format!("component = ?component and {range_filter_condition}"),
+                    params,
+                )
+            }
+
+            FilterExpression::Or(exprs) if self.is_component_in_list() => {
+                let placeholders: Vec<(String, Box<dyn ToSql>)> = exprs
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, e)| {
+                        let FilterExpression::WithComponent(c) = e else {
+                            unreachable!("checked by is_component_in_list")
+                        };
+                        (format!("?{}", idx + 1), Box::new(c.to_owned()) as _)
+                    })
+                    .collect();
+
+                let list = placeholders
+                    .iter()
+                    .map(|(p, _)| p.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                return Some(Anchor {
+                    fragment: SqlFragment {
+                        kind: PhantomData,
+                        sql: format!("component in ({list})"),
+                        placeholders,
+                    },
+                    distinct: true,
+                });
+            }
+
+            _ => return None,
+        };
+
+        Some(Anchor {
+            fragment,
+            distinct: false,
+        })
+    }
+
+    /// Range predicate on `{column}`; `?2`/`?3` are the bound placeholders.
+    fn range_condition(
+        column: &str,
+        start: &rusqlite::types::Value,
+        end: &rusqlite::types::Value,
+    ) -> (String, StaticPlaceholders) {
+        use rusqlite::types::Value;
+
+        match (start, end) {
+            (Value::Null, Value::Null) => (format!("{column} is null"), vec![]),
+            (Value::Null, end) => (
+                format!("velodb_extract_data({column}) <= velodb_extract_data(?2)"),
+                vec![("?2", Box::new(end.to_owned()) as _)],
+            ),
+            (start, Value::Null) => (
+                format!("velodb_extract_data({column}) >= velodb_extract_data(?2)"),
+                vec![("?2", Box::new(start.to_owned()) as _)],
+            ),
+            (start, end) => (
+                format!(
+                    "velodb_extract_data({column}) between velodb_extract_data(?2) and velodb_extract_data(?3)"
+                ),
+                vec![
+                    ("?2", Box::new(start.to_owned()) as _),
+                    ("?3", Box::new(end.to_owned()) as _),
+                ],
+            ),
         }
     }
 
@@ -190,27 +366,8 @@ impl FilterExpression {
                 start,
                 end,
             } => {
-                use rusqlite::types::Value;
-
-                let (range_filter_condition, mut params) = match (start, end) {
-                    (Value::Null, Value::Null) => ("c2.data is null", vec![]),
-                    (Value::Null, end) => (
-                        "velodb_extract_data(c2.data) <= velodb_extract_data(?2)",
-                        vec![("?2", Box::new(end.to_owned()) as _)],
-                    ),
-                    (start, Value::Null) => (
-                        "velodb_extract_data(c2.data) >= velodb_extract_data(?2)",
-                        vec![("?2", Box::new(start.to_owned()) as _)],
-                    ),
-
-                    (start, end) => (
-                        "velodb_extract_data(c2.data) between velodb_extract_data(?2) and velodb_extract_data(?3)",
-                        vec![
-                            ("?2", Box::new(start.to_owned()) as _),
-                            ("?3", Box::new(end.to_owned()) as _),
-                        ],
-                    ),
-                };
+                let (range_filter_condition, mut params) =
+                    Self::range_condition("c2.data", start, end);
 
                 let sql = format!(
                     "(select true from components c2 where c2.entity = components.entity and c2.component = ?component and {range_filter_condition})"
@@ -224,7 +381,16 @@ impl FilterExpression {
     }
 
     fn combine_exprs(via: &str, exprs: &[FilterExpression]) -> SqlFragment<Where> {
-        let mut exprs = exprs.iter().map(|e| e.where_clause());
+        Self::combine_fragments(via, exprs.iter().map(|e| e.where_clause()))
+    }
+
+    /// Joins fragments with `via`, renumbering all placeholders to a single
+    /// sequential `:n` namespace.
+    fn combine_fragments(
+        via: &str,
+        exprs: impl IntoIterator<Item = SqlFragment<Where>>,
+    ) -> SqlFragment<Where> {
+        let mut exprs = exprs.into_iter();
 
         let Some(fragment) = exprs.next() else {
             return FilterExpression::None.where_clause();
@@ -295,11 +461,15 @@ impl<T> SqlFragment<T> {
             .map(|(p, _)| (p.to_owned(), fun(p.to_owned())))
             .collect();
 
-        for (idx, (a, _)) in mappings.iter().enumerate() {
-            self.sql = self.sql.replace(a, &format!(":{idx}:"));
+        // Replace longer names first so `?1` doesn't clobber `?10`.
+        let mut ordered: Vec<(&String, &String)> = mappings.iter().collect();
+        ordered.sort_by(|(a, _), (b, _)| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+
+        for (idx, (a, _)) in ordered.iter().enumerate() {
+            self.sql = self.sql.replace(a.as_str(), &format!(":{idx}:"));
         }
 
-        for (idx, (_, b)) in mappings.iter().enumerate() {
+        for (idx, (_, b)) in ordered.iter().enumerate() {
             self.sql = self.sql.replace(&format!(":{idx}:"), b);
         }
 
@@ -339,6 +509,7 @@ impl<T: std::fmt::Debug> std::fmt::Debug for SqlFragment<T> {
 #[cfg(test)]
 mod test {
     use insta::assert_debug_snapshot;
+    use rusqlite::types::Value;
 
     use crate::query::ir::FilterExpression;
 
@@ -409,6 +580,42 @@ mod test {
                     FilterExpression::without_component("ecsdb::Bar"),
                 ]),
             ]),
+            // Anchoring cases
+            FilterExpression::with_component_data("ecsdb::Test", Value::Text("x".into())),
+            FilterExpression::with_component_data("ecsdb::Test", Value::Null),
+            FilterExpression::WithComponentDataRange {
+                component: "ecsdb::Test".into(),
+                start: Value::Integer(1),
+                end: Value::Integer(9),
+            },
+            FilterExpression::and([
+                FilterExpression::with_component("ecsdb::A"),
+                FilterExpression::with_component("ecsdb::B"),
+                FilterExpression::without_component("ecsdb::C"),
+            ]),
+            FilterExpression::and([
+                FilterExpression::without_component("ecsdb::C"),
+                FilterExpression::with_component_data("ecsdb::B", Value::Integer(7)),
+            ]),
+            FilterExpression::and([FilterExpression::without_component("ecsdb::C")]),
+            FilterExpression::or([
+                FilterExpression::with_component("ecsdb::A"),
+                FilterExpression::with_component("ecsdb::B"),
+            ]),
+            FilterExpression::and([
+                FilterExpression::or([
+                    FilterExpression::with_component("ecsdb::A"),
+                    FilterExpression::with_component("ecsdb::B"),
+                ]),
+                FilterExpression::without_component("ecsdb::C"),
+            ]),
+            FilterExpression::and([
+                FilterExpression::with_component("ecsdb::A"),
+                FilterExpression::or([
+                    FilterExpression::with_component("ecsdb::B"),
+                    FilterExpression::with_component("ecsdb::C"),
+                ]),
+            ]),
         ]
     }
 
@@ -430,6 +637,29 @@ mod test {
                 assert_debug_snapshot!(case.where_clause());
             });
         }
+    }
+
+    /// `?1` must not clobber `?10` when renumbering placeholders.
+    #[test]
+    fn in_list_with_ten_or_more_placeholders() {
+        let names: Vec<String> = (0..12).map(|i| format!("ecsdb::C{i}")).collect();
+        let expr = FilterExpression::or(names.iter().map(|n| FilterExpression::with_component(n)));
+
+        let fragment = expr.sql_query();
+        assert_eq!(fragment.placeholders.len(), 12);
+
+        for (idx, (placeholder, _)) in fragment.placeholders.iter().enumerate() {
+            assert_eq!(placeholder, &format!(":{}", idx + 1));
+        }
+
+        let expected = (1..=12)
+            .map(|n| format!(":{n}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        assert_eq!(
+            fragment.sql,
+            format!("select distinct entity from components where (component in ({expected}))")
+        );
     }
 
     #[test]

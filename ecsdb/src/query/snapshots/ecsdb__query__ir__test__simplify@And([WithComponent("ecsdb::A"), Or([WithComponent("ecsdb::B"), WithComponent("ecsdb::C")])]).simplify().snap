@@ -1,0 +1,21 @@
+---
+source: ecsdb/src/query/ir.rs
+description: "And([WithComponent(\"ecsdb::A\"), Or([WithComponent(\"ecsdb::B\"), WithComponent(\"ecsdb::C\")])]).simplify()"
+---
+And(
+    [
+        WithComponent(
+            "ecsdb::A",
+        ),
+        Or(
+            [
+                WithComponent(
+                    "ecsdb::B",
+                ),
+                WithComponent(
+                    "ecsdb::C",
+                ),
+            ],
+        ),
+    ],
+)

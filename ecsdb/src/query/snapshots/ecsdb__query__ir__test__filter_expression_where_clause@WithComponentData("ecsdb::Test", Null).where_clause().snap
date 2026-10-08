@@ -1,0 +1,15 @@
+---
+source: ecsdb/src/query/ir.rs
+description: "WithComponentData(\"ecsdb::Test\", Null).where_clause()"
+---
+SqlFragment<ecsdb::query::ir::Where> {
+    sql: "(select true from components c2 where c2.entity = components.entity and c2.component = ?1 and c2.data is null)",
+    placeholders: [
+        (
+            "?1",
+            Text(
+                "ecsdb::Test",
+            ),
+        ),
+    ],
+}

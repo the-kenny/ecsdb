@@ -286,8 +286,10 @@ impl Ecs {
     }
 
     pub fn system_entity<'a>(&'a self, name: &str) -> Option<Entity<'a>> {
-        self.query::<(Entity, Name), ()>()
-            .find_map(|(e, s)| (s.0 == name).then_some(e))
+        // Anchored on `component = Name and data = ?` so it hits the covering
+        // index instead of deserializing every `Name` in the database.
+        self.query_filtered::<Entity, ()>(Name(name.to_string()))
+            .next()
     }
     pub(crate) fn get_or_create_system_entity<'a>(&'a self, system: &str) -> Entity<'a> {
         self.system_entity(system)
